@@ -164,17 +164,31 @@ export async function applyEdits(
     pipeline = pipeline.linear(slope, intercept)
   }
 
-  // Highlights/shadows: tone-curve approximation via gamma
-  const highlightGamma = edits.highlights > 0
-    ? 1 - edits.highlights / 200
-    : 1 - edits.highlights / 400
-  const shadowGamma = edits.shadows > 0
-    ? 1 - edits.shadows / 400
-    : 1 - edits.shadows / 200
+  // Highlights: positive = brighten highlights (linear lift), negative = darken via gamma
+  // Shadows: positive = lift shadows (linear), negative = crush via gamma
+  // We separate the two directions to avoid gamma values < 1.0 (forbidden by sharp).
+  if (edits.highlights !== 0) {
+    if (edits.highlights > 0) {
+      // Lift highlights: gentle linear boost
+      const lift = edits.highlights / 500
+      pipeline = pipeline.linear(1 + lift, 0)
+    } else {
+      // Crush highlights: gamma > 1 darkens
+      const g = 1 + Math.abs(edits.highlights) / 100
+      pipeline = pipeline.gamma(Math.min(3, g))
+    }
+  }
 
-  const combinedGamma = highlightGamma * shadowGamma
-  if (Math.abs(combinedGamma - 1) > 0.01) {
-    pipeline = pipeline.gamma(Math.max(0.1, Math.min(3, combinedGamma)))
+  if (edits.shadows !== 0) {
+    if (edits.shadows > 0) {
+      // Lift shadows: additive offset in low range (approximated via linear)
+      const lift = edits.shadows / 1000
+      pipeline = pipeline.linear(1, lift)
+    } else {
+      // Crush shadows: gamma > 1 deepens blacks
+      const g = 1 + Math.abs(edits.shadows) / 100
+      pipeline = pipeline.gamma(Math.min(3, g))
+    }
   }
 
   // Sharpness
