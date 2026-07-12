@@ -82,6 +82,9 @@ export function registerIpcHandlers(): void {
       } else {
         const existing = stmts.getPhotoByPath.get(filePath) as Record<string, unknown> | undefined
         if (existing?.id) {
+          if (!existing.thumbnail && thumbnail) {
+            stmts.updatePhotoThumbnail.run(thumbnail, Number(existing.id))
+          }
           restoreSidecarForPhoto(Number(existing.id), filePath)
         }
       }

@@ -324,7 +324,10 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
             onClick={handleSvgClick}
             onDoubleClick={handleSvgDoubleClick}
           >
-            {localAdjs.map(adj => {
+            {[
+              ...localAdjs.filter((adj) => adj.id !== selectedLocalId),
+              ...localAdjs.filter((adj) => adj.id === selectedLocalId),
+            ].map(adj => {
               const isSelected = adj.id === selectedLocalId
               const isDrawingThis = drawingLasso?.id === adj.id
 

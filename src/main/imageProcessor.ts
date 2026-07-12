@@ -113,13 +113,25 @@ async function getSharpInput(filePath: string, maxSize?: number): Promise<Buffer
  * Generates a JPEG thumbnail (max 300px) for the grid view.
  */
 export async function generateThumbnail(filePath: string): Promise<Buffer> {
-  // Pass maxSize=600: sips resizes in-process, avoiding loading 187MB TIFF for a 300px thumb
-  const input = await getSharpInput(filePath, 600)
-  return sharp(input, { failOn: 'none' })
-    .rotate()
-    .resize(300, 300, { fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 75 })
-    .toBuffer()
+  const renderThumb = (input: Buffer | string): Promise<Buffer> =>
+    sharp(input, { failOn: 'none' })
+      .rotate()
+      .resize(300, 300, { fit: 'inside', withoutEnlargement: true })
+      .jpeg({ quality: 75 })
+      .toBuffer()
+
+  // Fast path for RAW thumbnails (small JPEG directly from decoder).
+  // Some ARW variants fail this path on macOS; fallback below keeps import usable.
+  try {
+    const input = await getSharpInput(filePath, 600)
+    return await renderThumb(input)
+  } catch {
+    if (!isRaw(filePath)) throw new Error(`Thumbnail generation failed for ${filePath}`)
+  }
+
+  // Fallback for RAW: decode full-quality raster (TIFF) then resize with sharp.
+  const fullInput = await getSharpInput(filePath)
+  return renderThumb(fullInput)
 }
 
 /**

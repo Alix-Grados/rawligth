@@ -92,6 +92,7 @@ export const stmts = {
   getPhotosByFolder: db.prepare(`SELECT * FROM photos WHERE folder_path = ? ORDER BY date_taken DESC`),
   getPhotoById: db.prepare(`SELECT * FROM photos WHERE id = ?`),
   getPhotoByPath: db.prepare(`SELECT * FROM photos WHERE file_path = ?`),
+  updatePhotoThumbnail: db.prepare(`UPDATE photos SET thumbnail = ? WHERE id = ?`),
   getEditsByPhotoId: db.prepare(`SELECT * FROM edits WHERE photo_id = ?`),
   upsertEdits: db.prepare(`
     INSERT INTO edits (photo_id, exposure, contrast, highlights, shadows, whites, blacks, temperature, tint, saturation, vibrance, sharpness, noise_reduction, updated_at)
