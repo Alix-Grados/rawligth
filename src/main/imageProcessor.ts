@@ -320,28 +320,18 @@ export async function applyEditsWithLocals(
     const meta = await sharp(baseBuffer).metadata()
     const w = meta.width!
     const h = meta.height!
-
-    const [baseRaw, localRaw] = await Promise.all([
-      sharp(baseBuffer).raw().toBuffer({ resolveWithObject: true }),
-      sharp(localBuffer).raw().toBuffer({ resolveWithObject: true }),
-    ])
-
-    const channels = baseRaw.info.channels
     const mask = generateRadialMask(w, h, adj)
 
-    const outBuf = Buffer.alloc(w * h * channels)
+    // Build an alpha channel from the radial mask, then composite local over base.
+    const localWithAlpha = await sharp(localBuffer)
+      .joinChannel(mask, { raw: { width: w, height: h, channels: 1 } })
+      .png()
+      .toBuffer()
 
-    for (let i = 0; i < w * h; i++) {
-      const alpha = mask[i] / 255
-      for (let c = 0; c < channels; c++) {
-        outBuf[i * channels + c] = Math.round(
-          baseRaw.data[i * channels + c] * (1 - alpha) +
-          localRaw.data[i * channels + c] * alpha
-        )
-      }
-    }
-
-    baseBuffer = await sharp(outBuf, { raw: { width: w, height: h, channels } }).png().toBuffer()
+    baseBuffer = await sharp(baseBuffer)
+      .composite([{ input: localWithAlpha, blend: 'over' }])
+      .png()
+      .toBuffer()
   }
 
   return sharp(baseBuffer).jpeg({ quality: options.quality ?? 90 }).toBuffer()
