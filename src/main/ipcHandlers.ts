@@ -4,6 +4,7 @@ import { join, basename, dirname } from 'path'
 import exifr from 'exifr'
 import { stmts } from './db'
 import { isSupported, generateThumbnail, applyEditsWithLocals, DEFAULT_EDITS, EditParams, LocalAdjustmentData } from './imageProcessor'
+import { persistSidecarForPhoto, restoreSidecarForPhoto } from './sidecar'
 import type { SaveDialogOptions } from 'electron'
 
 export function registerIpcHandlers(): void {
@@ -74,8 +75,15 @@ export function registerIpcHandlers(): void {
         thumbnail: thumbnail,
       })
 
-      if (info.lastInsertRowid) {
-        results.push(Number(info.lastInsertRowid))
+      if (info.changes > 0 && info.lastInsertRowid) {
+        const insertedId = Number(info.lastInsertRowid)
+        restoreSidecarForPhoto(insertedId, filePath)
+        results.push(insertedId)
+      } else {
+        const existing = stmts.getPhotoByPath.get(filePath) as Record<string, unknown> | undefined
+        if (existing?.id) {
+          restoreSidecarForPhoto(Number(existing.id), filePath)
+        }
       }
     }
 
@@ -146,11 +154,13 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('edits:save', (_, photoId: number, edits: EditParams) => {
     stmts.upsertEdits.run({ photo_id: photoId, ...edits })
+    persistSidecarForPhoto(photoId)
     return true
   })
 
   ipcMain.handle('edits:reset', (_, photoId: number) => {
     stmts.upsertEdits.run({ photo_id: photoId, ...DEFAULT_EDITS })
+    persistSidecarForPhoto(photoId)
     return DEFAULT_EDITS
   })
 
@@ -210,16 +220,22 @@ export function registerIpcHandlers(): void {
 
   ipcMain.handle('local:create', (_, photoId: number) => {
     const rows = stmts.insertLocal.all(photoId) as LocalAdjustmentData[]
+    persistSidecarForPhoto(photoId)
     return rows[0]
   })
 
   ipcMain.handle('local:update', (_, data: LocalAdjustmentData) => {
     stmts.updateLocal.run(data)
+    persistSidecarForPhoto(data.photo_id)
     return true
   })
 
   ipcMain.handle('local:delete', (_, id: number) => {
+    const localRow = stmts.getLocalById.get(id) as Record<string, unknown> | undefined
     stmts.deleteLocal.run(id)
+    if (localRow?.photo_id) {
+      persistSidecarForPhoto(Number(localRow.photo_id))
+    }
     return true
   })
 }

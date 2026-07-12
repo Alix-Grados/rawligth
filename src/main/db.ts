@@ -80,6 +80,7 @@ export const stmts = {
   `),
   getPhotosByFolder: db.prepare(`SELECT * FROM photos WHERE folder_path = ? ORDER BY date_taken DESC`),
   getPhotoById: db.prepare(`SELECT * FROM photos WHERE id = ?`),
+  getPhotoByPath: db.prepare(`SELECT * FROM photos WHERE file_path = ?`),
   getEditsByPhotoId: db.prepare(`SELECT * FROM edits WHERE photo_id = ?`),
   upsertEdits: db.prepare(`
     INSERT INTO edits (photo_id, exposure, contrast, highlights, shadows, whites, blacks, temperature, tint, saturation, vibrance, sharpness, noise_reduction, updated_at)
@@ -93,7 +94,20 @@ export const stmts = {
   `),
   deletePhoto: db.prepare(`DELETE FROM photos WHERE id = ?`),
   getLocalsByPhotoId: db.prepare(`SELECT * FROM local_adjustments WHERE photo_id = ? ORDER BY id`),
+  getLocalById: db.prepare(`SELECT * FROM local_adjustments WHERE id = ?`),
   insertLocal: db.prepare(`INSERT INTO local_adjustments (photo_id) VALUES (?) RETURNING *`),
+  insertLocalFull: db.prepare(`
+    INSERT INTO local_adjustments (
+      photo_id, cx, cy, rx, ry, feather, invert,
+      exposure, contrast, highlights, shadows, whites, blacks,
+      temperature, tint, saturation, vibrance, sharpness, noise_reduction
+    ) VALUES (
+      @photo_id, @cx, @cy, @rx, @ry, @feather, @invert,
+      @exposure, @contrast, @highlights, @shadows, @whites, @blacks,
+      @temperature, @tint, @saturation, @vibrance, @sharpness, @noise_reduction
+    )
+  `),
+  deleteLocalsByPhotoId: db.prepare(`DELETE FROM local_adjustments WHERE photo_id = ?`),
   updateLocal: db.prepare(`
     UPDATE local_adjustments SET
       cx=@cx, cy=@cy, rx=@rx, ry=@ry, feather=@feather, invert=@invert,

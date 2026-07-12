@@ -45,12 +45,12 @@ export const DEFAULT_EDITS: EditParams = {
 }
 
 /**
- * Converts a camera RAW file to a JPEG buffer using the platform's native tools.
+ * Converts a camera RAW file to a high-quality raster buffer using native tools.
  * - macOS: uses built-in `sips`
  * - Linux/Windows: tries `dcraw` or `rawtherapee-cli`
  */
 async function rawToBuffer(filePath: string): Promise<Buffer> {
-  const tmpFile = join(tmpdir(), `rawlight_${Date.now()}_${basename(filePath)}.jpg`)
+  const tmpFile = join(tmpdir(), `rawlight_${Date.now()}_${basename(filePath)}.tiff`)
 
   const runCmd = (cmd: string, args: string[]): Promise<void> =>
     new Promise((resolve, reject) => {
@@ -60,19 +60,31 @@ async function rawToBuffer(filePath: string): Promise<Buffer> {
       })
     })
 
+  const runCmdOut = (cmd: string, args: string[]): Promise<Buffer> =>
+    new Promise((resolve, reject) => {
+      execFile(cmd, args, { timeout: 45000, encoding: 'buffer', maxBuffer: 128 * 1024 * 1024 }, (err, stdout) => {
+        if (err) reject(err)
+        else resolve(stdout as Buffer)
+      })
+    })
+
   try {
     if (process.platform === 'darwin') {
-      // sips is built into macOS — no installation required
-      await runCmd('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '90', filePath, '--out', tmpFile])
+      // Keep a high-quality intermediary (TIFF) to avoid RAW->JPEG losses.
+      await runCmd('sips', ['-s', 'format', 'tiff', filePath, '--out', tmpFile])
+      return readFileSync(tmpFile)
     } else {
-      // Try dcraw (brew install dcraw / apt install dcraw)
+      // Try dcraw first: output TIFF to stdout.
       // -c: write to stdout, -T: TIFF output, -w: camera white balance
-      await runCmd('dcraw', ['-c', '-T', '-w', '-q', '3', filePath]).catch(async () => {
-        // Fallback: rawtherapee-cli
-        await runCmd('rawtherapee-cli', ['-o', tmpFile, '-c', filePath])
-      })
+      const dcrawOut = await runCmdOut('dcraw', ['-c', '-T', '-w', '-q', '3', filePath]).catch(() => Buffer.alloc(0))
+      if (dcrawOut.length > 0) {
+        return dcrawOut
+      }
+
+      // Fallback: rawtherapee-cli writing TIFF on disk.
+      await runCmd('rawtherapee-cli', ['-o', tmpFile, '-t', '-c', filePath])
+      return readFileSync(tmpFile)
     }
-    return readFileSync(tmpFile)
   } finally {
     try { unlinkSync(tmpFile) } catch { /* ignore cleanup errors */ }
   }
@@ -101,7 +113,7 @@ export async function generateThumbnail(filePath: string): Promise<Buffer> {
 }
 
 /**
- * Applies edit params to an image and returns a JPEG buffer (for preview or export).
+ * Applies edit params to an image and returns a lossless PNG buffer.
  */
 export async function applyEdits(
   filePath: string,
