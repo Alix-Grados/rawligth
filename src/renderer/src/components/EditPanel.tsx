@@ -21,6 +21,20 @@ interface SliderProps {
   onChange: (v: number) => void
 }
 
+type LocalNumericKey =
+  | 'exposure'
+  | 'contrast'
+  | 'highlights'
+  | 'shadows'
+  | 'whites'
+  | 'blacks'
+  | 'temperature'
+  | 'tint'
+  | 'saturation'
+  | 'vibrance'
+  | 'sharpness'
+  | 'noise_reduction'
+
 function Slider({ label, value, min, max, displayValue, onChange }: SliderProps): React.JSX.Element {
   const shown = displayValue ?? value
   return (
@@ -94,7 +108,13 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, onEditsChanged, o
 
   // ---------- Local adjustments ----------
   const handleAddRadial = async (): Promise<void> => {
-    const adj = await window.api.createLocalAdj(photo.id) as LocalAdjustment
+    const adj = await window.api.createLocalAdj(photo.id, 'radial') as LocalAdjustment
+    onLocalsChanged([...localAdjs, adj])
+    onSelectLocal(adj.id)
+  }
+
+  const handleAddLasso = async (): Promise<void> => {
+    const adj = await window.api.createLocalAdj(photo.id, 'lasso') as LocalAdjustment
     onLocalsChanged([...localAdjs, adj])
     onSelectLocal(adj.id)
   }
@@ -108,7 +128,7 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, onEditsChanged, o
   }
 
   const updateLocalEdit = useCallback(
-    (id: number, key: keyof Omit<LocalAdjustment, 'id' | 'photo_id' | 'cx' | 'cy' | 'rx' | 'ry' | 'feather' | 'invert'>, value: number) => {
+    (id: number, key: LocalNumericKey, value: number) => {
       const updated = localAdjs.map(a => a.id === id ? { ...a, [key]: value } : a)
       onLocalsChanged(updated)
       if (localSaveTimer.current) clearTimeout(localSaveTimer.current)
@@ -186,7 +206,10 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, onEditsChanged, o
       <div className={styles.group}>
         <div className={styles.localHeader}>
           <div className={styles.groupTitle}>Filtres locaux</div>
-          <button className={styles.addLocalBtn} onClick={handleAddRadial} title="Ajouter un filtre radial">+</button>
+          <div>
+            <button className={styles.addLocalBtn} onClick={handleAddRadial} title="Ajouter un filtre radial">+R</button>
+            <button className={styles.addLocalBtn} onClick={handleAddLasso} title="Ajouter un filtre lasso">+L</button>
+          </div>
         </div>
         {localAdjs.map((adj, i) => (
           <div
@@ -194,8 +217,8 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, onEditsChanged, o
             className={styles.localItem + (adj.id === selectedLocalId ? ' ' + styles.localItemActive : '')}
             onClick={() => onSelectLocal(adj.id === selectedLocalId ? null : adj.id)}
           >
-            <span className={styles.localIcon}>◎</span>
-            <span className={styles.localName}>Filtre radial {i + 1}</span>
+            <span className={styles.localIcon}>{adj.kind === 'lasso' ? '⬠' : '◎'}</span>
+            <span className={styles.localName}>Filtre {adj.kind === 'lasso' ? 'lasso' : 'radial'} {i + 1}</span>
             <button
               className={styles.localDelete}
               onClick={(e) => { e.stopPropagation(); handleDeleteLocal(adj.id) }}

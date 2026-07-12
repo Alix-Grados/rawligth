@@ -51,6 +51,8 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS local_adjustments (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     photo_id INTEGER NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'radial',
+    points_json TEXT,
     cx REAL NOT NULL DEFAULT 0.5,
     cy REAL NOT NULL DEFAULT 0.5,
     rx REAL NOT NULL DEFAULT 0.25,
@@ -72,6 +74,15 @@ db.exec(`
     FOREIGN KEY (photo_id) REFERENCES photos(id) ON DELETE CASCADE
   );
 `)
+
+// Lightweight migrations for existing catalogs.
+const localCols = (db.prepare(`PRAGMA table_info(local_adjustments)`).all() as Array<{ name: string }>).map((c) => c.name)
+if (!localCols.includes('kind')) {
+  db.exec(`ALTER TABLE local_adjustments ADD COLUMN kind TEXT NOT NULL DEFAULT 'radial'`)
+}
+if (!localCols.includes('points_json')) {
+  db.exec(`ALTER TABLE local_adjustments ADD COLUMN points_json TEXT`)
+}
 
 export const stmts = {
   insertPhoto: db.prepare(`
@@ -95,14 +106,18 @@ export const stmts = {
   deletePhoto: db.prepare(`DELETE FROM photos WHERE id = ?`),
   getLocalsByPhotoId: db.prepare(`SELECT * FROM local_adjustments WHERE photo_id = ? ORDER BY id`),
   getLocalById: db.prepare(`SELECT * FROM local_adjustments WHERE id = ?`),
-  insertLocal: db.prepare(`INSERT INTO local_adjustments (photo_id) VALUES (?) RETURNING *`),
+  insertLocal: db.prepare(`
+    INSERT INTO local_adjustments (photo_id, kind, points_json)
+    VALUES (?, ?, ?)
+    RETURNING *
+  `),
   insertLocalFull: db.prepare(`
     INSERT INTO local_adjustments (
-      photo_id, cx, cy, rx, ry, feather, invert,
+      photo_id, kind, points_json, cx, cy, rx, ry, feather, invert,
       exposure, contrast, highlights, shadows, whites, blacks,
       temperature, tint, saturation, vibrance, sharpness, noise_reduction
     ) VALUES (
-      @photo_id, @cx, @cy, @rx, @ry, @feather, @invert,
+      @photo_id, @kind, @points_json, @cx, @cy, @rx, @ry, @feather, @invert,
       @exposure, @contrast, @highlights, @shadows, @whites, @blacks,
       @temperature, @tint, @saturation, @vibrance, @sharpness, @noise_reduction
     )
@@ -110,6 +125,7 @@ export const stmts = {
   deleteLocalsByPhotoId: db.prepare(`DELETE FROM local_adjustments WHERE photo_id = ?`),
   updateLocal: db.prepare(`
     UPDATE local_adjustments SET
+      kind=@kind, points_json=@points_json,
       cx=@cx, cy=@cy, rx=@rx, ry=@ry, feather=@feather, invert=@invert,
       exposure=@exposure, contrast=@contrast, highlights=@highlights, shadows=@shadows,
       whites=@whites, blacks=@blacks, temperature=@temperature, tint=@tint,

@@ -219,8 +219,16 @@ export function registerIpcHandlers(): void {
     return stmts.getLocalsByPhotoId.all(photoId)
   })
 
-  ipcMain.handle('local:create', (_, photoId: number) => {
-    const rows = stmts.insertLocal.all(photoId) as LocalAdjustmentData[]
+  ipcMain.handle('local:create', (_, photoId: number, kind: 'radial' | 'lasso' = 'radial') => {
+    const defaultPoints = kind === 'lasso'
+      ? JSON.stringify([
+          { x: 0.35, y: 0.35 },
+          { x: 0.65, y: 0.35 },
+          { x: 0.65, y: 0.65 },
+          { x: 0.35, y: 0.65 },
+        ])
+      : null
+    const rows = stmts.insertLocal.all(photoId, kind, defaultPoints) as LocalAdjustmentData[]
     persistSidecarForPhoto(photoId)
     return rows[0]
   })

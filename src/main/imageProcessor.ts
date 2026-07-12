@@ -223,6 +223,8 @@ export async function applyEdits(
 export interface LocalAdjustmentData {
   id: number
   photo_id: number
+  kind: 'radial' | 'lasso'
+  points_json: string | null
   cx: number
   cy: number
   rx: number
@@ -241,6 +243,37 @@ export interface LocalAdjustmentData {
   vibrance: number
   sharpness: number
   noise_reduction: number
+}
+
+interface LassoPoint {
+  x: number
+  y: number
+}
+
+function parseLassoPoints(pointsJson: string | null): LassoPoint[] {
+  if (!pointsJson) return []
+  try {
+    const parsed = JSON.parse(pointsJson) as Array<{ x: unknown; y: unknown }>
+    return parsed
+      .map((p) => ({ x: Number(p.x), y: Number(p.y) }))
+      .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
+  } catch {
+    return []
+  }
+}
+
+function pointInPolygon(x: number, y: number, poly: Array<{ x: number; y: number }>): boolean {
+  let inside = false
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
+    const xi = poly[i].x
+    const yi = poly[i].y
+    const xj = poly[j].x
+    const yj = poly[j].y
+    const intersects = ((yi > y) !== (yj > y)) &&
+      (x < ((xj - xi) * (y - yi)) / ((yj - yi) || 1e-9) + xi)
+    if (intersects) inside = !inside
+  }
+  return inside
 }
 
 /**
@@ -276,6 +309,29 @@ function generateRadialMask(width: number, height: number, adj: LocalAdjustmentD
     }
   }
   return buf
+}
+
+function generateLassoMask(width: number, height: number, adj: LocalAdjustmentData): Buffer {
+  const buf = Buffer.alloc(width * height)
+  const points = parseLassoPoints(adj.points_json)
+  if (points.length < 3) return buf
+
+  const poly = points.map((p) => ({ x: p.x * width, y: p.y * height }))
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const inside = pointInPolygon(x + 0.5, y + 0.5, poly)
+      const alpha = inside ? 255 : 0
+      buf[y * width + x] = adj.invert ? 255 - alpha : alpha
+    }
+  }
+  return buf
+}
+
+function generateMask(width: number, height: number, adj: LocalAdjustmentData): Buffer {
+  if (adj.kind === 'lasso') {
+    return generateLassoMask(width, height, adj)
+  }
+  return generateRadialMask(width, height, adj)
 }
 
 /**
@@ -319,7 +375,7 @@ export async function applyEditsWithLocals(
     const meta = await sharp(baseBuffer).metadata()
     const w = meta.width!
     const h = meta.height!
-    const mask = generateRadialMask(w, h, adj)
+    const mask = generateMask(w, h, adj)
 
     // Build an alpha channel from the radial mask, then composite local over base.
     const localWithAlpha = await sharp(localBuffer)

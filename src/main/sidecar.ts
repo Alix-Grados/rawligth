@@ -34,7 +34,8 @@ export function persistSidecarForPhoto(photoId: number): void {
     globalEdits: mapEdits(editsRow),
     localAdjustments: localRows.map((r) => ({
       id: r.id,
-      type: 'radial',
+      type: r.kind,
+      points: r.points_json ? JSON.parse(r.points_json) : null,
       cx: r.cx,
       cy: r.cy,
       rx: r.rx,
@@ -62,6 +63,8 @@ export function persistSidecarForPhoto(photoId: number): void {
 }
 
 type SidecarLocal = {
+  type?: 'radial' | 'lasso'
+  points?: Array<{ x: number; y: number }> | null
   cx: number
   cy: number
   rx: number
@@ -115,6 +118,8 @@ export function restoreSidecarForPhoto(photoId: number, filePath: string): void 
     const e = local.edits ?? {}
     stmts.insertLocalFull.run({
       photo_id: photoId,
+      kind: local.type === 'lasso' ? 'lasso' : 'radial',
+      points_json: local.points ? JSON.stringify(local.points) : null,
       cx: num(local.cx, 0.5),
       cy: num(local.cy, 0.5),
       rx: num(local.rx, 0.25),

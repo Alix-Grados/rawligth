@@ -57,6 +57,14 @@ function App(): React.JSX.Element {
     }
   }, [localAdjs])
 
+  const handleUpdateLocalPoints = useCallback(async (id: number, points_json: string) => {
+    setLocalAdjs(prev => prev.map(a => a.id === id ? { ...a, points_json } : a))
+    const adj = localAdjs.find(a => a.id === id)
+    if (adj) {
+      await window.api.updateLocalAdj({ ...adj, points_json })
+    }
+  }, [localAdjs])
+
   useEffect(() => {
     const lastFolder = localStorage.getItem('rawlight_last_folder')
     if (lastFolder) {
@@ -108,6 +116,7 @@ function App(): React.JSX.Element {
                     selectedLocalId={selectedLocalId}
                     onSelectLocal={setSelectedLocalId}
                     onUpdateLocalPosition={handleUpdateLocalPosition}
+                    onUpdateLocalPoints={handleUpdateLocalPoints}
                   />
                   <EditPanel
                     photo={selectedPhoto}
