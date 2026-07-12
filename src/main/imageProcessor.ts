@@ -131,7 +131,9 @@ function applyEditsToPipeline(
   edits: EditParams,
   options: { width?: number } = {}
 ): Sharp {
-  let pipeline = sharp(input, { failOn: 'none' }).rotate()
+  // Force 8-bit sRGB immediately — TIFF from sips is rgb16 (ushort).
+  // Without this, the blending step gets 16-bit raw data and corrupts the output.
+  let pipeline = sharp(input, { failOn: 'none' }).rotate().toColorspace('srgb')
 
   if (options.width) {
     pipeline = pipeline.resize(options.width, undefined, { withoutEnlargement: true })
