@@ -36,12 +36,6 @@ function App(): React.JSX.Element {
     setLoading(false)
   }, [])
 
-  const handleOpenFolder = useCallback(async () => {
-    const folder = await window.api.openFolder()
-    if (!folder) return
-    await loadFolder(folder)
-  }, [loadFolder])
-
   const handleSelectPhoto = useCallback(async (photo: Photo) => {
     setSelectedPhoto(photo)
     setSelectedLocalId(null)
@@ -81,7 +75,6 @@ function App(): React.JSX.Element {
       <Sidebar
         currentFolder={currentFolder}
         photos={photos}
-        onOpenFolder={handleOpenFolder}
         onSelectFolder={loadFolder}
       />
 

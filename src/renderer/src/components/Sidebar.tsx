@@ -5,11 +5,10 @@ import styles from './Sidebar.module.css'
 interface Props {
   currentFolder: string | null
   photos: Photo[]
-  onOpenFolder: () => void
   onSelectFolder: (folder: string) => void
 }
 
-export function Sidebar({ currentFolder, onOpenFolder }: Props): React.JSX.Element {
+export function Sidebar({ currentFolder, onSelectFolder }: Props): React.JSX.Element {
   const [recentFolders, setRecentFolders] = useState<string[]>(() => {
     try {
       return JSON.parse(localStorage.getItem('rawlight_recent_folders') ?? '[]')
@@ -24,7 +23,7 @@ export function Sidebar({ currentFolder, onOpenFolder }: Props): React.JSX.Eleme
     const updated = [folder, ...recentFolders.filter((f) => f !== folder)].slice(0, 8)
     setRecentFolders(updated)
     localStorage.setItem('rawlight_recent_folders', JSON.stringify(updated))
-    onOpenFolder()
+    await onSelectFolder(folder)
   }
 
   return (
@@ -57,8 +56,7 @@ export function Sidebar({ currentFolder, onOpenFolder }: Props): React.JSX.Eleme
               className={styles.folderItem + (folder === currentFolder ? ' ' + styles.active : '')}
               title={folder}
               onClick={async () => {
-                await window.api.importFolder(folder)
-                onOpenFolder()
+                await onSelectFolder(folder)
               }}
             >
               <span className={styles.folderIcon}>📁</span>

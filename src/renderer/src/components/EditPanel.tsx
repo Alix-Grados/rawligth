@@ -17,15 +17,17 @@ interface SliderProps {
   value: number
   min: number
   max: number
+  displayValue?: number
   onChange: (v: number) => void
 }
 
-function Slider({ label, value, min, max, onChange }: SliderProps): React.JSX.Element {
+function Slider({ label, value, min, max, displayValue, onChange }: SliderProps): React.JSX.Element {
+  const shown = displayValue ?? value
   return (
     <div className={styles.sliderRow}>
       <div className={styles.sliderHeader}>
         <span className={styles.sliderLabel}>{label}</span>
-        <span className={styles.sliderValue}>{value > 0 ? `+${value}` : value}</span>
+        <span className={styles.sliderValue}>{shown > 0 ? `+${shown}` : shown}</span>
       </div>
       <input
         type="range"
@@ -145,7 +147,14 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, onEditsChanged, o
 
       <div className={styles.group}>
         <div className={styles.groupTitle}>Lumière</div>
-        <Slider label="Exposition" value={Math.round(edits.exposure * 10) / 10} min={-50} max={50} onChange={(v) => updateEdit('exposure', v / 10)} />
+        <Slider
+          label="Exposition"
+          value={Math.round(edits.exposure * 10)}
+          displayValue={Math.round(edits.exposure * 10) / 10}
+          min={-50}
+          max={50}
+          onChange={(v) => updateEdit('exposure', v / 10)}
+        />
         <Slider label="Contraste" value={edits.contrast} min={-100} max={100} onChange={(v) => updateEdit('contrast', v)} />
         <Slider label="Hautes lumières" value={edits.highlights} min={-100} max={100} onChange={(v) => updateEdit('highlights', v)} />
         <Slider label="Ombres" value={edits.shadows} min={-100} max={100} onChange={(v) => updateEdit('shadows', v)} />
@@ -211,7 +220,14 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, onEditsChanged, o
           </div>
           <div className={styles.group}>
             <div className={styles.groupTitle}>Lumière locale</div>
-            <Slider label="Exposition" value={Math.round(selectedAdj.exposure * 10) / 10} min={-50} max={50} onChange={(v) => updateLocalEdit(selectedAdj.id, 'exposure', v / 10)} />
+            <Slider
+              label="Exposition"
+              value={Math.round(selectedAdj.exposure * 10)}
+              displayValue={Math.round(selectedAdj.exposure * 10) / 10}
+              min={-50}
+              max={50}
+              onChange={(v) => updateLocalEdit(selectedAdj.id, 'exposure', v / 10)}
+            />
             <Slider label="Contraste" value={selectedAdj.contrast} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'contrast', v)} />
             <Slider label="Hautes lumières" value={selectedAdj.highlights} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'highlights', v)} />
             <Slider label="Ombres" value={selectedAdj.shadows} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'shadows', v)} />
