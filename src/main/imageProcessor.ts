@@ -1,4 +1,4 @@
-import sharp from 'sharp'
+import sharp, { Sharp } from 'sharp'
 import { existsSync, readFileSync, unlinkSync } from 'fs'
 import { extname, basename, join } from 'path'
 import { tmpdir } from 'os'
@@ -123,31 +123,28 @@ export async function generateThumbnail(filePath: string): Promise<Buffer> {
 }
 
 /**
- * Applies edit params to an image and returns a lossless PNG buffer.
+ * Applies edit params to an already-decoded lossless buffer (PNG or path).
+ * Internal helper — accepts a pre-decoded buffer so RAW files are only decoded once.
  */
-export async function applyEdits(
-  filePath: string,
+function applyEditsToPipeline(
+  input: Buffer | string,
   edits: EditParams,
-  options: { width?: number; quality?: number } = {}
-): Promise<Buffer> {
-  const input = await getSharpInput(filePath)
-
+  options: { width?: number } = {}
+): Sharp {
   let pipeline = sharp(input, { failOn: 'none' }).rotate()
 
   if (options.width) {
     pipeline = pipeline.resize(options.width, undefined, { withoutEnlargement: true })
   }
 
-  // Exposure: multiply by 2^EV
   if (edits.exposure !== 0) {
     const factor = Math.pow(2, edits.exposure)
     pipeline = pipeline.linear(factor, 0)
   }
 
-  // Modulate: brightness (whites/blacks via gamma), saturation, hue (tint)
   const brightnessFactor = 1 + (edits.whites - edits.blacks) / 200
   const saturationFactor = 1 + edits.saturation / 100
-  const hueDegrees = edits.tint * 0.5 // small hue shift for tint
+  const hueDegrees = edits.tint * 0.5
 
   if (brightnessFactor !== 1 || saturationFactor !== 1 || hueDegrees !== 0) {
     pipeline = pipeline.modulate({
@@ -157,53 +154,50 @@ export async function applyEdits(
     })
   }
 
-  // Contrast via linear transform: out = in * slope + intercept
   if (edits.contrast !== 0) {
     const slope = 1 + edits.contrast / 100
     const intercept = 128 * (1 - slope) / 255
     pipeline = pipeline.linear(slope, intercept)
   }
 
-  // Highlights: positive = brighten highlights (linear lift), negative = darken via gamma
-  // Shadows: positive = lift shadows (linear), negative = crush via gamma
-  // We separate the two directions to avoid gamma values < 1.0 (forbidden by sharp).
   if (edits.highlights !== 0) {
     if (edits.highlights > 0) {
-      // Lift highlights: gentle linear boost
-      const lift = edits.highlights / 500
-      pipeline = pipeline.linear(1 + lift, 0)
+      pipeline = pipeline.linear(1 + edits.highlights / 500, 0)
     } else {
-      // Crush highlights: gamma > 1 darkens
-      const g = 1 + Math.abs(edits.highlights) / 100
-      pipeline = pipeline.gamma(Math.min(3, g))
+      pipeline = pipeline.gamma(Math.min(3, 1 + Math.abs(edits.highlights) / 100))
     }
   }
 
   if (edits.shadows !== 0) {
     if (edits.shadows > 0) {
-      // Lift shadows: additive offset in low range (approximated via linear)
-      const lift = edits.shadows / 1000
-      pipeline = pipeline.linear(1, lift)
+      pipeline = pipeline.linear(1, edits.shadows / 1000)
     } else {
-      // Crush shadows: gamma > 1 deepens blacks
-      const g = 1 + Math.abs(edits.shadows) / 100
-      pipeline = pipeline.gamma(Math.min(3, g))
+      pipeline = pipeline.gamma(Math.min(3, 1 + Math.abs(edits.shadows) / 100))
     }
   }
 
-  // Sharpness
   if (edits.sharpness > 0) {
     const sigma = 0.5 + (edits.sharpness / 100) * 1.5
     pipeline = pipeline.sharpen({ sigma })
   }
 
-  // Noise reduction via blur
   if (edits.noise_reduction > 0) {
-    const blurSigma = (edits.noise_reduction / 100) * 1.5
-    pipeline = pipeline.blur(Math.max(0.3, blurSigma))
+    pipeline = pipeline.blur(Math.max(0.3, (edits.noise_reduction / 100) * 1.5))
   }
 
-  return pipeline.png().toBuffer()
+  return pipeline
+}
+
+/**
+ * Applies edit params to an image and returns a lossless PNG buffer.
+ */
+export async function applyEdits(
+  filePath: string,
+  edits: EditParams,
+  options: { width?: number; quality?: number } = {}
+): Promise<Buffer> {
+  const input = await getSharpInput(filePath)
+  return applyEditsToPipeline(input, edits, options).png().toBuffer()
 }
 
 export interface LocalAdjustmentData {
@@ -265,7 +259,8 @@ function generateRadialMask(width: number, height: number, adj: LocalAdjustmentD
 }
 
 /**
- * Applies global edits, then blends local (radial) adjustments on top.
+ * Applies global edits then blends local (radial) adjustments on top.
+ * The RAW file is decoded ONCE and all edit pipelines share the same decoded buffer.
  * Returns a final JPEG buffer.
  */
 export async function applyEditsWithLocals(
@@ -274,7 +269,11 @@ export async function applyEditsWithLocals(
   localAdjs: LocalAdjustmentData[],
   options: { width?: number; quality?: number } = {}
 ): Promise<Buffer> {
-  let baseBuffer = await applyEdits(filePath, globalEdits, options)
+  // Decode RAW once — this is the expensive step for ARW/CR2/NEF etc.
+  const decoded = await getSharpInput(filePath)
+
+  // Apply global edits to get the base layer
+  let baseBuffer = await applyEditsToPipeline(decoded, globalEdits, options).png().toBuffer()
 
   for (const adj of localAdjs) {
     const combined: EditParams = {
@@ -292,14 +291,13 @@ export async function applyEditsWithLocals(
       noise_reduction: globalEdits.noise_reduction + adj.noise_reduction,
     }
 
-    const localBuffer = await applyEdits(filePath, combined, options)
+    // Reuse the same decoded buffer — no second sips call
+    const localBuffer = await applyEditsToPipeline(decoded, combined, options).png().toBuffer()
 
-    // Get dimensions from base
     const meta = await sharp(baseBuffer).metadata()
     const w = meta.width!
     const h = meta.height!
 
-    // Blend base + local using the radial mask (manual per-pixel alpha blend)
     const [baseRaw, localRaw] = await Promise.all([
       sharp(baseBuffer).raw().toBuffer({ resolveWithObject: true }),
       sharp(localBuffer).raw().toBuffer({ resolveWithObject: true }),
