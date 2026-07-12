@@ -16,7 +16,7 @@ interface Props {
   selectedLocalId: number | null
   onSelectLocal: (id: number) => void
   onUpdateLocalPosition: (id: number, cx: number, cy: number, rx: number, ry: number) => void
-  onUpdateLocalPoints: (id: number, points_json: string) => void
+  onUpdateLocalPoints: (id: number, points_json: string, refreshPreview?: boolean) => void
 }
 
 type DragState =
@@ -72,7 +72,11 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
   const imgRef = useRef<HTMLImageElement>(null)
   const [imgBounds, setImgBounds] = useState<ImageBounds | null>(null)
   const [drawingLasso, setDrawingLasso] = useState<{ id: number; points: Array<{ x: number; y: number }> } | null>(null)
+  const [draggingLasso, setDraggingLasso] = useState<{ id: number; points: Array<{ x: number; y: number }> } | null>(null)
   const dragRef = useRef<DragState>(null)
+  const activePointerIdRef = useRef<number | null>(null)
+  const pendingDragLassoRef = useRef<{ id: number; points: Array<{ x: number; y: number }> } | null>(null)
+  const dragRafRef = useRef<number | null>(null)
   // Track the last photo id to reset src when switching photos
   const lastPhotoId = useRef<number | null>(null)
 
@@ -103,6 +107,32 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
     }
   }, [drawingLasso, localAdjs, selectedLocalId])
 
+  useEffect(() => {
+    if (!draggingLasso) return
+    const selected = localAdjs.find((a) => a.id === selectedLocalId)
+    if (!selected || selected.kind !== 'lasso' || selected.id !== draggingLasso.id) {
+      setDraggingLasso(null)
+    }
+  }, [draggingLasso, localAdjs, selectedLocalId])
+
+  useEffect(() => {
+    return () => {
+      if (dragRafRef.current !== null) {
+        cancelAnimationFrame(dragRafRef.current)
+      }
+    }
+  }, [])
+
+  const scheduleDraggingLassoPreview = useCallback((next: { id: number; points: Array<{ x: number; y: number }> }) => {
+    pendingDragLassoRef.current = next
+    if (dragRafRef.current !== null) return
+    dragRafRef.current = requestAnimationFrame(() => {
+      dragRafRef.current = null
+      if (!pendingDragLassoRef.current) return
+      setDraggingLasso(pendingDragLassoRef.current)
+    })
+  }, [])
+
   // Compute actual image bounds within container (object-fit: contain)
   const updateBounds = useCallback(() => {
     const img = imgRef.current
@@ -122,7 +152,8 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
   }, [src, updateBounds])
 
   // Mouse events for drag/resize
-  const handleSvgMouseMove = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+  const handleSvgPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+    if (activePointerIdRef.current !== null && e.pointerId !== activePointerIdRef.current) return
     const drag = dragRef.current
     if (!drag || !imgBounds) return
     const svgRect = e.currentTarget.getBoundingClientRect()
@@ -156,13 +187,28 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
           y: Math.max(0, Math.min(1, p.y + dy)),
         }
       })
-      onUpdateLocalPoints(drag.id, JSON.stringify(next))
-    }
-  }, [imgBounds, localAdjs, onUpdateLocalPosition, onUpdateLocalPoints])
+      scheduleDraggingLassoPreview({ id: drag.id, points: next })
 
-  const handleSvgMouseUp = useCallback(() => {
+    }
+  }, [imgBounds, localAdjs, onUpdateLocalPosition, scheduleDraggingLassoPreview])
+
+  const handleSvgPointerUp = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
+    if (activePointerIdRef.current !== null && e.pointerId !== activePointerIdRef.current) return
+    if (dragRafRef.current !== null) {
+      cancelAnimationFrame(dragRafRef.current)
+      dragRafRef.current = null
+    }
+    const drag = dragRef.current
+    const latest = pendingDragLassoRef.current ?? draggingLasso
+    pendingDragLassoRef.current = null
+
+    if (drag?.type === 'lasso-point' && latest && latest.id === drag.id) {
+      onUpdateLocalPoints(drag.id, JSON.stringify(latest.points), true)
+      setDraggingLasso(null)
+    }
+    activePointerIdRef.current = null
     dragRef.current = null
-  }, [])
+  }, [draggingLasso, onUpdateLocalPoints])
 
   const finalizeDrawing = useCallback((withExtraPoint?: { x: number; y: number }) => {
     if (!drawingLasso) return
@@ -272,9 +318,9 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
         {imgBounds && localAdjs.length > 0 && (
           <svg
             className={styles.overlay}
-            onMouseMove={handleSvgMouseMove}
-            onMouseUp={handleSvgMouseUp}
-            onMouseLeave={handleSvgMouseUp}
+            onPointerMove={handleSvgPointerMove}
+            onPointerUp={handleSvgPointerUp}
+            onPointerCancel={handleSvgPointerUp}
             onClick={handleSvgClick}
             onDoubleClick={handleSvgDoubleClick}
           >
@@ -283,7 +329,10 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
               const isDrawingThis = drawingLasso?.id === adj.id
 
               if (adj.kind === 'lasso') {
-                const points = isDrawingThis ? drawingLasso.points : parseLassoPoints(adj.points_json)
+                const isDraggingThis = draggingLasso?.id === adj.id
+                const points = isDrawingThis
+                  ? drawingLasso.points
+                  : (isDraggingThis ? draggingLasso.points : parseLassoPoints(adj.points_json))
                 const scaled = points.map((p) => ({ x: imgBounds.x + p.x * imgBounds.w, y: imgBounds.y + p.y * imgBounds.h }))
                 const pointsAttr = scaled.map((p) => `${p.x},${p.y}`).join(' ')
 
@@ -301,7 +350,7 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
                     {points.length >= 3 ? (
                       <polygon
                         points={pointsAttr}
-                        fill={isDrawingThis ? 'rgba(232,160,32,0.04)' : 'rgba(232,160,32,0.08)'}
+                        fill={isDrawingThis ? 'rgba(232,160,32,0.04)' : (isDraggingThis ? 'rgba(232,160,32,0.18)' : 'rgba(232,160,32,0.08)')}
                         stroke={isSelected ? '#e8a020' : 'rgba(255,255,255,0.5)'}
                         strokeWidth={isSelected ? 2 : 1}
                         strokeDasharray={isSelected ? undefined : '4 3'}
@@ -328,8 +377,10 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
                         stroke="#fff"
                         strokeWidth={1}
                         style={{ cursor: 'move' }}
-                        onMouseDown={(e) => {
+                        onPointerDown={(e) => {
                           e.stopPropagation()
+                          activePointerIdRef.current = e.pointerId
+                          e.currentTarget.setPointerCapture(e.pointerId)
                           const svg = e.currentTarget.closest('svg')
                           if (!svg) return
                           dragRef.current = {

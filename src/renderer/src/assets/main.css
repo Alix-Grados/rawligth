@@ -17,14 +17,15 @@
   --text: #e0e0e0;
   --text-muted: #888;
   --text-label: #aaa;
-  --sidebar-width: 220px;
-  --edit-panel-width: 280px;
+  --sidebar-width: clamp(180px, 18vw, 240px);
+  --edit-panel-width: clamp(260px, 24vw, 360px);
   --toolbar-height: 48px;
   --radius: 6px;
 }
 
 html, body, #root {
   height: 100%;
+  width: 100%;
   background: var(--bg-dark);
   color: var(--text);
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -84,12 +85,9 @@ code {
   font-size: 85%;
 }
 
+/* App root must always fill the Electron window. */
 #root {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  margin-bottom: 80px;
+  display: block;
 }
 
 .logo {
@@ -210,6 +208,11 @@ code {
 }
 
 @media (max-width: 720px) {
+  :root {
+    --sidebar-width: 164px;
+    --edit-panel-width: 240px;
+  }
+
   .text {
     font-size: 20px;
   }

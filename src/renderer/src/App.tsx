@@ -19,6 +19,12 @@ function App(): React.JSX.Element {
   const [selectedLocalId, setSelectedLocalId] = useState<number | null>(null)
   const previewRevision = useRef(0)
   const [, setPreviewRev] = useState(0)
+  const localPersistTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
+
+  const bumpPreview = useCallback(() => {
+    previewRevision.current += 1
+    setPreviewRev(previewRevision.current)
+  }, [])
 
   const loadFolder = useCallback(async (folder: string) => {
     setLoading(true)
@@ -45,25 +51,43 @@ function App(): React.JSX.Element {
   }, [])
 
   const handleEditsChanged = useCallback(() => {
-    previewRevision.current += 1
-    setPreviewRev(previewRevision.current)
-  }, [])
+    bumpPreview()
+  }, [bumpPreview])
 
-  const handleUpdateLocalPosition = useCallback(async (id: number, cx: number, cy: number, rx: number, ry: number) => {
-    setLocalAdjs(prev => prev.map(a => a.id === id ? { ...a, cx, cy, rx, ry } : a))
-    const adj = localAdjs.find(a => a.id === id)
-    if (adj) {
-      await window.api.updateLocalAdj({ ...adj, cx, cy, rx, ry })
-    }
-  }, [localAdjs])
+  const scheduleLocalPersist = useCallback((adj: LocalAdjustment, refreshPreview: boolean = true) => {
+    const existing = localPersistTimers.current[adj.id]
+    if (existing) clearTimeout(existing)
+    localPersistTimers.current[adj.id] = setTimeout(async () => {
+      const ok = await window.api.updateLocalAdj(adj)
+      if (ok && refreshPreview) bumpPreview()
+    }, 120)
+  }, [bumpPreview])
 
-  const handleUpdateLocalPoints = useCallback(async (id: number, points_json: string) => {
-    setLocalAdjs(prev => prev.map(a => a.id === id ? { ...a, points_json } : a))
-    const adj = localAdjs.find(a => a.id === id)
-    if (adj) {
-      await window.api.updateLocalAdj({ ...adj, points_json })
-    }
-  }, [localAdjs])
+  const handleUpdateLocalPosition = useCallback((id: number, cx: number, cy: number, rx: number, ry: number) => {
+    setLocalAdjs((prev) => {
+      let nextAdj: LocalAdjustment | null = null
+      const next = prev.map((a) => {
+        if (a.id !== id) return a
+        nextAdj = { ...a, cx, cy, rx, ry }
+        return nextAdj
+      })
+      if (nextAdj) scheduleLocalPersist(nextAdj)
+      return next
+    })
+  }, [scheduleLocalPersist])
+
+  const handleUpdateLocalPoints = useCallback((id: number, points_json: string, refreshPreview: boolean = true) => {
+    setLocalAdjs((prev) => {
+      let nextAdj: LocalAdjustment | null = null
+      const next = prev.map((a) => {
+        if (a.id !== id) return a
+        nextAdj = { ...a, points_json }
+        return nextAdj
+      })
+      if (nextAdj) scheduleLocalPersist(nextAdj, refreshPreview)
+      return next
+    })
+  }, [scheduleLocalPersist])
 
   useEffect(() => {
     const lastFolder = localStorage.getItem('rawlight_last_folder')
@@ -77,6 +101,12 @@ function App(): React.JSX.Element {
       localStorage.setItem('rawlight_last_folder', currentFolder)
     }
   }, [currentFolder])
+
+  useEffect(() => {
+    return () => {
+      Object.values(localPersistTimers.current).forEach((timer) => clearTimeout(timer))
+    }
+  }, [])
 
   return (
     <div className={styles.app}>

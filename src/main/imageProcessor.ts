@@ -168,7 +168,7 @@ function applyEditsToPipeline(
 
   if (brightnessFactor !== 1 || saturationFactor !== 1 || hueDegrees !== 0) {
     pipeline = pipeline.modulate({
-      brightness: Math.max(0.05, Math.min(8, brightnessFactor)),
+      brightness: Math.max(0, brightnessFactor),
       saturation: Math.max(0, saturationFactor),
       hue: hueDegrees,
     })
@@ -372,21 +372,32 @@ export async function applyEditsWithLocals(
     }
 
     const localBuffer = await applyEditsToPipeline(baseBuffer, localDelta, {}).png().toBuffer()
-    const meta = await sharp(baseBuffer).metadata()
-    const w = meta.width!
-    const h = meta.height!
+    const baseRaw = await sharp(baseBuffer).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    const localRaw = await sharp(localBuffer).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    const w = baseRaw.info.width
+    const h = baseRaw.info.height
     const mask = generateMask(w, h, adj)
 
-    // Build an alpha channel from the radial mask, then composite local over base.
-    const localWithAlpha = await sharp(localBuffer)
-      .joinChannel(mask, { raw: { width: w, height: h, channels: 1 } })
-      .png()
-      .toBuffer()
+    const channels = 3
+    const out = Buffer.alloc(w * h * channels)
 
-    baseBuffer = await sharp(baseBuffer)
-      .composite([{ input: localWithAlpha, blend: 'over' }])
-      .png()
-      .toBuffer()
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x
+        const m = mask[i] / 255
+        const bi = i * baseRaw.info.channels
+        const li = i * localRaw.info.channels
+        const oi = i * channels
+
+        for (let c = 0; c < channels; c++) {
+          const b = baseRaw.data[bi + c]
+          const l = localRaw.data[li + c]
+          out[oi + c] = Math.max(0, Math.min(255, Math.round(b * (1 - m) + l * m)))
+        }
+      }
+    }
+
+    baseBuffer = await sharp(out, { raw: { width: w, height: h, channels } }).png().toBuffer()
   }
 
   return sharp(baseBuffer).jpeg({ quality: options.quality ?? 90 }).toBuffer()
