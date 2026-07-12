@@ -13,7 +13,7 @@ const api = {
     ipcRenderer.invoke('image:export', photoId, options),
   // Local adjustments
   getLocalAdjs: (photoId: number): Promise<unknown[]> => ipcRenderer.invoke('local:getByPhoto', photoId),
-  createLocalAdj: (photoId: number, kind: 'radial' | 'lasso' = 'radial') =>
+  createLocalAdj: (photoId: number, kind: 'radial' | 'lasso' | 'color' = 'radial') =>
     ipcRenderer.invoke('local:create', photoId, kind),
   updateLocalAdj: (data: unknown): Promise<boolean> => ipcRenderer.invoke('local:update', data),
   deleteLocalAdj: (id: number): Promise<boolean> => ipcRenderer.invoke('local:delete', id),

@@ -7,9 +7,11 @@ interface Props {
   photo: Photo
   localAdjs: LocalAdjustment[]
   selectedLocalId: number | null
+  colorPickLocalId: number | null
   onEditsChanged: () => void
   onLocalsChanged: (adjs: LocalAdjustment[]) => void
   onSelectLocal: (id: number | null) => void
+  onStartColorPick: (id: number | null) => void
 }
 
 interface SliderProps {
@@ -34,6 +36,14 @@ type LocalNumericKey =
   | 'vibrance'
   | 'sharpness'
   | 'noise_reduction'
+  | 'target_r'
+  | 'target_g'
+  | 'target_b'
+  | 'color_tolerance'
+
+function toHexByte(v: number): string {
+  return Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')
+}
 
 function Slider({ label, value, min, max, displayValue, onChange }: SliderProps): React.JSX.Element {
   const shown = displayValue ?? value
@@ -55,7 +65,7 @@ function Slider({ label, value, min, max, displayValue, onChange }: SliderProps)
   )
 }
 
-export function EditPanel({ photo, localAdjs, selectedLocalId, onEditsChanged, onLocalsChanged, onSelectLocal }: Props): React.JSX.Element {
+export function EditPanel({ photo, localAdjs, selectedLocalId, colorPickLocalId, onEditsChanged, onLocalsChanged, onSelectLocal, onStartColorPick }: Props): React.JSX.Element {
   const [edits, setEdits] = useState<EditParams>(DEFAULT_EDITS)
   const [exporting, setExporting] = useState(false)
   const [exportMsg, setExportMsg] = useState<string | null>(null)
@@ -119,6 +129,12 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, onEditsChanged, o
     onSelectLocal(adj.id)
   }
 
+  const handleAddColor = async (): Promise<void> => {
+    const adj = await window.api.createLocalAdj(photo.id, 'color') as LocalAdjustment
+    onLocalsChanged([...localAdjs, adj])
+    onSelectLocal(adj.id)
+  }
+
   const handleDeleteLocal = async (id: number): Promise<void> => {
     await window.api.deleteLocalAdj(id)
     const updated = localAdjs.filter(a => a.id !== id)
@@ -158,6 +174,26 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, onEditsChanged, o
     },
     [localAdjs, onLocalsChanged, onEditsChanged]
   )
+
+  const updateLocalColor = useCallback((id: number, hex: string) => {
+    const m = /^#?([0-9a-fA-F]{6})$/.exec(hex)
+    if (!m) return
+    const value = m[1]
+    const r = parseInt(value.slice(0, 2), 16)
+    const g = parseInt(value.slice(2, 4), 16)
+    const b = parseInt(value.slice(4, 6), 16)
+
+    const updated = localAdjs.map(a => a.id === id ? { ...a, target_r: r, target_g: g, target_b: b } : a)
+    onLocalsChanged(updated)
+    if (localSaveTimer.current) clearTimeout(localSaveTimer.current)
+    localSaveTimer.current = setTimeout(async () => {
+      const adj = updated.find(a => a.id === id)
+      if (adj) {
+        await window.api.updateLocalAdj(adj)
+        onEditsChanged()
+      }
+    }, 400)
+  }, [localAdjs, onEditsChanged, onLocalsChanged])
 
   const selectedAdj = localAdjs.find(a => a.id === selectedLocalId) ?? null
 
@@ -209,6 +245,7 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, onEditsChanged, o
           <div>
             <button className={styles.addLocalBtn} onClick={handleAddRadial} title="Ajouter un filtre radial">+R</button>
             <button className={styles.addLocalBtn} onClick={handleAddLasso} title="Ajouter un filtre lasso">+L</button>
+            <button className={styles.addLocalBtn} onClick={handleAddColor} title="Ajouter un filtre couleur">+C</button>
           </div>
         </div>
         {localAdjs.map((adj, i) => (
@@ -217,8 +254,14 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, onEditsChanged, o
             className={styles.localItem + (adj.id === selectedLocalId ? ' ' + styles.localItemActive : '')}
             onClick={() => onSelectLocal(adj.id === selectedLocalId ? null : adj.id)}
           >
-            <span className={styles.localIcon}>{adj.kind === 'lasso' ? '⬠' : '◎'}</span>
-            <span className={styles.localName}>Filtre {adj.kind === 'lasso' ? 'lasso' : 'radial'} {i + 1}</span>
+            <span className={styles.localIcon}>
+              {adj.kind === 'lasso'
+                ? '⬠'
+                : (adj.kind === 'color'
+                    ? (colorPickLocalId === adj.id ? '🧪' : '◉')
+                    : '◎')}
+            </span>
+            <span className={styles.localName}>Filtre {adj.kind === 'lasso' ? 'lasso' : (adj.kind === 'color' ? 'couleur' : 'radial')} {i + 1}</span>
             <button
               className={styles.localDelete}
               onClick={(e) => { e.stopPropagation(); handleDeleteLocal(adj.id) }}
@@ -231,16 +274,61 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, onEditsChanged, o
       {/* Sliders for selected local adjustment */}
       {selectedAdj && (
         <div className={styles.localSliders}>
-          <div className={styles.group}>
-            <div className={styles.groupTitle}>Forme</div>
-            <Slider label="Adoucissement" value={Math.round(selectedAdj.feather * 100)} min={0} max={100} onChange={(v) => updateLocalShape(selectedAdj.id, 'feather', v / 100)} />
-            <div className={styles.sliderRow}>
-              <label className={styles.invertToggle}>
-                <input type="checkbox" checked={selectedAdj.invert === 1} onChange={(e) => updateLocalShape(selectedAdj.id, 'invert', e.target.checked ? 1 : 0)} />
-                <span>Inverser (effet à l'extérieur)</span>
-              </label>
+          {selectedAdj.kind !== 'color' && (
+            <div className={styles.group}>
+              <div className={styles.groupTitle}>Forme</div>
+              <Slider label="Adoucissement" value={Math.round(selectedAdj.feather * 100)} min={0} max={100} onChange={(v) => updateLocalShape(selectedAdj.id, 'feather', v / 100)} />
+              <div className={styles.sliderRow}>
+                <label className={styles.invertToggle}>
+                  <input type="checkbox" checked={selectedAdj.invert === 1} onChange={(e) => updateLocalShape(selectedAdj.id, 'invert', e.target.checked ? 1 : 0)} />
+                  <span>Inverser (effet à l'extérieur)</span>
+                </label>
+              </div>
             </div>
-          </div>
+          )}
+
+          {selectedAdj.kind === 'color' && (
+            <div className={styles.group}>
+              <div className={styles.groupTitle}>Sélection couleur</div>
+              <div className={styles.sliderRow}>
+                <div className={styles.sliderHeader}>
+                  <span className={styles.sliderLabel}>Couleur cible</span>
+                  <span className={styles.sliderValue}>#{toHexByte(selectedAdj.target_r)}{toHexByte(selectedAdj.target_g)}{toHexByte(selectedAdj.target_b)}</span>
+                </div>
+                <input
+                  type="color"
+                  value={`#${toHexByte(selectedAdj.target_r)}${toHexByte(selectedAdj.target_g)}${toHexByte(selectedAdj.target_b)}`}
+                  onChange={(e) => updateLocalColor(selectedAdj.id, e.target.value)}
+                />
+              </div>
+              <div className={styles.sliderRow}>
+                <button
+                  className={styles.pickBtn + (colorPickLocalId === selectedAdj.id ? ' ' + styles.pickBtnActive : '')}
+                  onClick={() => onStartColorPick(colorPickLocalId === selectedAdj.id ? null : selectedAdj.id)}
+                >
+                  <span className={styles.pickBtnInner}>
+                    <span className={styles.pickIconText} aria-hidden="true">
+                      {colorPickLocalId === selectedAdj.id ? '🧪' : '◉'}
+                    </span>
+                    <span>{colorPickLocalId === selectedAdj.id ? 'Pipette active' : 'Prelever sur image'}</span>
+                  </span>
+                </button>
+              </div>
+              <Slider
+                label="Tolérance"
+                value={selectedAdj.color_tolerance}
+                min={1}
+                max={255}
+                onChange={(v) => updateLocalEdit(selectedAdj.id, 'color_tolerance', v)}
+              />
+              <div className={styles.sliderRow}>
+                <label className={styles.invertToggle}>
+                  <input type="checkbox" checked={selectedAdj.invert === 1} onChange={(e) => updateLocalShape(selectedAdj.id, 'invert', e.target.checked ? 1 : 0)} />
+                  <span>Inverser (sélection opposée)</span>
+                </label>
+              </div>
+            </div>
+          )}
           <div className={styles.group}>
             <div className={styles.groupTitle}>Lumière locale</div>
             <Slider

@@ -14,9 +14,12 @@ interface Props {
   previewRevision: number
   localAdjs: LocalAdjustment[]
   selectedLocalId: number | null
+  colorPickLocalId: number | null
   onSelectLocal: (id: number) => void
   onUpdateLocalPosition: (id: number, cx: number, cy: number, rx: number, ry: number) => void
   onUpdateLocalPoints: (id: number, points_json: string, refreshPreview?: boolean) => void
+  onPickLocalColor: (id: number, r: number, g: number, b: number) => void
+  onStopColorPick: () => void
 }
 
 type DragState =
@@ -64,13 +67,14 @@ function pointToSegmentDistance(
   return Math.sqrt(dx * dx + dy * dy)
 }
 
-export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId, onSelectLocal, onUpdateLocalPosition, onUpdateLocalPoints }: Props): React.JSX.Element {
+export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId, colorPickLocalId, onSelectLocal, onUpdateLocalPosition, onUpdateLocalPoints, onPickLocalColor, onStopColorPick }: Props): React.JSX.Element {
   // src always holds the LAST successfully loaded image — never set to null
   const [src, setSrc] = useState<string | null>(photo.thumbnail)
   const [loading, setLoading] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const [imgBounds, setImgBounds] = useState<ImageBounds | null>(null)
+  const [colorMaskPreview, setColorMaskPreview] = useState<string | null>(null)
   const [drawingLasso, setDrawingLasso] = useState<{ id: number; points: Array<{ x: number; y: number }> } | null>(null)
   const [draggingLasso, setDraggingLasso] = useState<{ id: number; points: Array<{ x: number; y: number }> } | null>(null)
   const dragRef = useRef<DragState>(null)
@@ -114,6 +118,71 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
       setDraggingLasso(null)
     }
   }, [draggingLasso, localAdjs, selectedLocalId])
+
+  const selectedColorAdj = localAdjs.find((a) => a.id === selectedLocalId && a.kind === 'color') ?? null
+
+  useEffect(() => {
+    const img = imgRef.current
+    if (!img || !imgBounds || !selectedColorAdj || !src || loading) {
+      setColorMaskPreview(null)
+      return
+    }
+
+    let cancelled = false
+    const raf = requestAnimationFrame(() => {
+      if (cancelled) return
+
+      const displayW = Math.max(1, Math.round(imgBounds.w))
+      const displayH = Math.max(1, Math.round(imgBounds.h))
+      const scale = Math.min(1, 640 / displayW)
+      const w = Math.max(1, Math.round(displayW * scale))
+      const h = Math.max(1, Math.round(displayH * scale))
+
+      const sourceCanvas = document.createElement('canvas')
+      sourceCanvas.width = w
+      sourceCanvas.height = h
+      const sourceCtx = sourceCanvas.getContext('2d')
+      if (!sourceCtx) return
+      sourceCtx.drawImage(img, 0, 0, w, h)
+      const sourceData = sourceCtx.getImageData(0, 0, w, h)
+
+      const outCanvas = document.createElement('canvas')
+      outCanvas.width = w
+      outCanvas.height = h
+      const outCtx = outCanvas.getContext('2d')
+      if (!outCtx) return
+      const out = outCtx.createImageData(w, h)
+
+      const tr = selectedColorAdj.target_r
+      const tg = selectedColorAdj.target_g
+      const tb = selectedColorAdj.target_b
+      const tol = Math.max(1, Math.min(255, Math.round(selectedColorAdj.color_tolerance)))
+      const tolSq = tol * tol
+
+      for (let i = 0; i < w * h; i++) {
+        const p = i * 4
+        const dr = sourceData.data[p] - tr
+        const dg = sourceData.data[p + 1] - tg
+        const db = sourceData.data[p + 2] - tb
+        const distSq = dr * dr + dg * dg + db * db
+        const match = distSq <= tolSq
+        const selected = selectedColorAdj.invert === 1 ? !match : match
+
+        out.data[p] = 32
+        out.data[p + 1] = 201
+        out.data[p + 2] = 255
+        out.data[p + 3] = selected ? 120 : 0
+      }
+
+      outCtx.putImageData(out, 0, 0)
+      setColorMaskPreview(outCanvas.toDataURL('image/png'))
+    })
+
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+    }
+  }, [imgBounds, loading, selectedColorAdj, src])
 
   useEffect(() => {
     return () => {
@@ -233,7 +302,44 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
     }
   }, [imgBounds])
 
+  const sampleColorFromEvent = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    const img = imgRef.current
+    if (!img || !imgBounds || img.naturalWidth <= 0 || img.naturalHeight <= 0) return null
+
+    const svgRect = e.currentTarget.getBoundingClientRect()
+    const px = e.clientX - svgRect.left
+    const py = e.clientY - svgRect.top
+    if (px < imgBounds.x || px > imgBounds.x + imgBounds.w || py < imgBounds.y || py > imgBounds.y + imgBounds.h) {
+      return null
+    }
+
+    const ix = Math.max(0, Math.min(img.naturalWidth - 1, Math.round(((px - imgBounds.x) / imgBounds.w) * (img.naturalWidth - 1))))
+    const iy = Math.max(0, Math.min(img.naturalHeight - 1, Math.round(((py - imgBounds.y) / imgBounds.h) * (img.naturalHeight - 1))))
+
+    const canvas = document.createElement('canvas')
+    canvas.width = img.naturalWidth
+    canvas.height = img.naturalHeight
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return null
+    ctx.drawImage(img, 0, 0, img.naturalWidth, img.naturalHeight)
+    const data = ctx.getImageData(ix, iy, 1, 1).data
+    return { r: data[0], g: data[1], b: data[2] }
+  }, [imgBounds])
+
   const handleSvgClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    if (colorPickLocalId !== null) {
+      const selected = localAdjs.find((a) => a.id === colorPickLocalId)
+      if (selected?.kind === 'color') {
+        e.preventDefault()
+        const sample = sampleColorFromEvent(e)
+        if (sample) {
+          onPickLocalColor(colorPickLocalId, sample.r, sample.g, sample.b)
+          onStopColorPick()
+        }
+        return
+      }
+    }
+
     if (!drawingLasso || e.detail > 1) return
     if (dragRef.current) return
     const point = normalizedPointFromEvent(e)
@@ -254,7 +360,7 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
       if (!prev) return prev
       return { ...prev, points: [...prev.points, point] }
     })
-  }, [drawingLasso, finalizeDrawing, imgBounds, normalizedPointFromEvent])
+  }, [colorPickLocalId, drawingLasso, finalizeDrawing, imgBounds, localAdjs, normalizedPointFromEvent, onPickLocalColor, onStopColorPick, sampleColorFromEvent])
 
   const handleSvgDoubleClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     if (!drawingLasso) return
@@ -314,10 +420,20 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
         {/* Subtle loading indicator — shown over existing image, not replacing it */}
         {loading && src && <div className={styles.loadingDot} />}
 
+        {colorMaskPreview && imgBounds && (
+          <img
+            src={colorMaskPreview}
+            alt="color-mask"
+            className={styles.colorMask}
+            style={{ left: imgBounds.x, top: imgBounds.y, width: imgBounds.w, height: imgBounds.h }}
+            draggable={false}
+          />
+        )}
+
         {/* SVG overlay for radial filters */}
         {imgBounds && localAdjs.length > 0 && (
           <svg
-            className={styles.overlay}
+            className={styles.overlay + (colorPickLocalId !== null ? ' ' + styles.overlayPickMode + ' ' + styles.pipetteCursor : '')}
             onPointerMove={handleSvgPointerMove}
             onPointerUp={handleSvgPointerUp}
             onPointerCancel={handleSvgPointerUp}
@@ -401,6 +517,10 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
                 )
               }
 
+              if (adj.kind === 'color') {
+                return null
+              }
+
               const cx = imgBounds.x + adj.cx * imgBounds.w
               const cy = imgBounds.y + adj.cy * imgBounds.h
               const rx = adj.rx * imgBounds.w
@@ -469,6 +589,18 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
                   ))}
                   <text x={imgBounds.x + 12} y={imgBounds.y + 20} fill="#e8a020" fontSize={12} fontWeight={600}>
                     Mode lasso: clic pour ajouter, clic sur le 1er point ou double-clic pour fermer, Option/Cmd/Ctrl + clic contour pour inserer
+                  </text>
+                </g>
+              )
+            })()}
+
+            {colorPickLocalId !== null && (() => {
+              const selected = localAdjs.find((a) => a.id === colorPickLocalId)
+              if (!selected || selected.kind !== 'color') return null
+              return (
+                <g>
+                  <text x={imgBounds.x + 12} y={imgBounds.y + 20} fill="#e8a020" fontSize={12} fontWeight={600}>
+                    Pipette: clique sur l'image pour prelever une couleur
                   </text>
                 </g>
               )

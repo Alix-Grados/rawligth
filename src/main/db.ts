@@ -53,6 +53,10 @@ db.exec(`
     photo_id INTEGER NOT NULL,
     kind TEXT NOT NULL DEFAULT 'radial',
     points_json TEXT,
+    target_r INTEGER NOT NULL DEFAULT 128,
+    target_g INTEGER NOT NULL DEFAULT 128,
+    target_b INTEGER NOT NULL DEFAULT 128,
+    color_tolerance INTEGER NOT NULL DEFAULT 28,
     cx REAL NOT NULL DEFAULT 0.5,
     cy REAL NOT NULL DEFAULT 0.5,
     rx REAL NOT NULL DEFAULT 0.25,
@@ -83,6 +87,18 @@ if (!localCols.includes('kind')) {
 if (!localCols.includes('points_json')) {
   db.exec(`ALTER TABLE local_adjustments ADD COLUMN points_json TEXT`)
 }
+if (!localCols.includes('target_r')) {
+  db.exec(`ALTER TABLE local_adjustments ADD COLUMN target_r INTEGER NOT NULL DEFAULT 128`)
+}
+if (!localCols.includes('target_g')) {
+  db.exec(`ALTER TABLE local_adjustments ADD COLUMN target_g INTEGER NOT NULL DEFAULT 128`)
+}
+if (!localCols.includes('target_b')) {
+  db.exec(`ALTER TABLE local_adjustments ADD COLUMN target_b INTEGER NOT NULL DEFAULT 128`)
+}
+if (!localCols.includes('color_tolerance')) {
+  db.exec(`ALTER TABLE local_adjustments ADD COLUMN color_tolerance INTEGER NOT NULL DEFAULT 28`)
+}
 
 export const stmts = {
   insertPhoto: db.prepare(`
@@ -108,17 +124,17 @@ export const stmts = {
   getLocalsByPhotoId: db.prepare(`SELECT * FROM local_adjustments WHERE photo_id = ? ORDER BY id`),
   getLocalById: db.prepare(`SELECT * FROM local_adjustments WHERE id = ?`),
   insertLocal: db.prepare(`
-    INSERT INTO local_adjustments (photo_id, kind, points_json)
-    VALUES (?, ?, ?)
+    INSERT INTO local_adjustments (photo_id, kind, points_json, target_r, target_g, target_b, color_tolerance)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     RETURNING *
   `),
   insertLocalFull: db.prepare(`
     INSERT INTO local_adjustments (
-      photo_id, kind, points_json, cx, cy, rx, ry, feather, invert,
+      photo_id, kind, points_json, target_r, target_g, target_b, color_tolerance, cx, cy, rx, ry, feather, invert,
       exposure, contrast, highlights, shadows, whites, blacks,
       temperature, tint, saturation, vibrance, sharpness, noise_reduction
     ) VALUES (
-      @photo_id, @kind, @points_json, @cx, @cy, @rx, @ry, @feather, @invert,
+      @photo_id, @kind, @points_json, @target_r, @target_g, @target_b, @color_tolerance, @cx, @cy, @rx, @ry, @feather, @invert,
       @exposure, @contrast, @highlights, @shadows, @whites, @blacks,
       @temperature, @tint, @saturation, @vibrance, @sharpness, @noise_reduction
     )
@@ -127,6 +143,7 @@ export const stmts = {
   updateLocal: db.prepare(`
     UPDATE local_adjustments SET
       kind=@kind, points_json=@points_json,
+      target_r=@target_r, target_g=@target_g, target_b=@target_b, color_tolerance=@color_tolerance,
       cx=@cx, cy=@cy, rx=@rx, ry=@ry, feather=@feather, invert=@invert,
       exposure=@exposure, contrast=@contrast, highlights=@highlights, shadows=@shadows,
       whites=@whites, blacks=@blacks, temperature=@temperature, tint=@tint,

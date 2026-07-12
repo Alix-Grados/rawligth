@@ -37,8 +37,12 @@ export interface Photo {
 export interface LocalAdjustment {
   id: number
   photo_id: number
-  kind: 'radial' | 'lasso'
+  kind: 'radial' | 'lasso' | 'color'
   points_json: string | null
+  target_r: number
+  target_g: number
+  target_b: number
+  color_tolerance: number
   cx: number
   cy: number
   rx: number
@@ -69,7 +73,7 @@ export interface RawlightAPI {
   resetEdits(photoId: number): Promise<EditParams>
   exportImage(photoId: number, options: { format: 'jpeg' | 'png'; quality: number }): Promise<{ success: boolean; path?: string; error?: string }>
   getLocalAdjs(photoId: number): Promise<LocalAdjustment[]>
-  createLocalAdj(photoId: number, kind?: 'radial' | 'lasso'): Promise<LocalAdjustment>
+  createLocalAdj(photoId: number, kind?: 'radial' | 'lasso' | 'color'): Promise<LocalAdjustment>
   updateLocalAdj(data: LocalAdjustment): Promise<boolean>
   deleteLocalAdj(id: number): Promise<boolean>
 }

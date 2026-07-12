@@ -235,8 +235,12 @@ export async function applyEdits(
 export interface LocalAdjustmentData {
   id: number
   photo_id: number
-  kind: 'radial' | 'lasso'
+  kind: 'radial' | 'lasso' | 'color'
   points_json: string | null
+  target_r: number
+  target_g: number
+  target_b: number
+  color_tolerance: number
   cx: number
   cy: number
   rx: number
@@ -339,7 +343,44 @@ function generateLassoMask(width: number, height: number, adj: LocalAdjustmentDa
   return buf
 }
 
-function generateMask(width: number, height: number, adj: LocalAdjustmentData): Buffer {
+function generateColorMask(
+  width: number,
+  height: number,
+  adj: LocalAdjustmentData,
+  source: { data: Buffer; channels: number }
+): Buffer {
+  const buf = Buffer.alloc(width * height)
+  const tr = Math.max(0, Math.min(255, Math.round(adj.target_r)))
+  const tg = Math.max(0, Math.min(255, Math.round(adj.target_g)))
+  const tb = Math.max(0, Math.min(255, Math.round(adj.target_b)))
+  const tol = Math.max(1, Math.min(255, Math.round(adj.color_tolerance)))
+  const tolSq = tol * tol
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const i = y * width + x
+      const p = i * source.channels
+      const dr = Number(source.data[p]) - tr
+      const dg = Number(source.data[p + 1]) - tg
+      const db = Number(source.data[p + 2]) - tb
+      const distSq = dr * dr + dg * dg + db * db
+      const alpha = distSq <= tolSq ? 255 : 0
+      buf[i] = adj.invert ? 255 - alpha : alpha
+    }
+  }
+
+  return buf
+}
+
+function generateMask(
+  width: number,
+  height: number,
+  adj: LocalAdjustmentData,
+  source: { data: Buffer; channels: number }
+): Buffer {
+  if (adj.kind === 'color') {
+    return generateColorMask(width, height, adj, source)
+  }
   if (adj.kind === 'lasso') {
     return generateLassoMask(width, height, adj)
   }
@@ -388,7 +429,7 @@ export async function applyEditsWithLocals(
     const localRaw = await sharp(localBuffer).removeAlpha().raw().toBuffer({ resolveWithObject: true })
     const w = baseRaw.info.width
     const h = baseRaw.info.height
-    const mask = generateMask(w, h, adj)
+    const mask = generateMask(w, h, adj, { data: baseRaw.data, channels: baseRaw.info.channels })
 
     const channels = 3
     const out = Buffer.alloc(w * h * channels)

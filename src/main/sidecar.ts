@@ -36,6 +36,8 @@ export function persistSidecarForPhoto(photoId: number): void {
       id: r.id,
       type: r.kind,
       points: r.points_json ? JSON.parse(r.points_json) : null,
+      target: { r: r.target_r, g: r.target_g, b: r.target_b },
+      tolerance: r.color_tolerance,
       cx: r.cx,
       cy: r.cy,
       rx: r.rx,
@@ -63,8 +65,10 @@ export function persistSidecarForPhoto(photoId: number): void {
 }
 
 type SidecarLocal = {
-  type?: 'radial' | 'lasso'
+  type?: 'radial' | 'lasso' | 'color'
   points?: Array<{ x: number; y: number }> | null
+  target?: { r: number; g: number; b: number }
+  tolerance?: number
   cx: number
   cy: number
   rx: number
@@ -118,8 +122,12 @@ export function restoreSidecarForPhoto(photoId: number, filePath: string): void 
     const e = local.edits ?? {}
     stmts.insertLocalFull.run({
       photo_id: photoId,
-      kind: local.type === 'lasso' ? 'lasso' : 'radial',
+      kind: local.type === 'lasso' ? 'lasso' : (local.type === 'color' ? 'color' : 'radial'),
       points_json: local.points ? JSON.stringify(local.points) : null,
+      target_r: num(local.target?.r, 128),
+      target_g: num(local.target?.g, 128),
+      target_b: num(local.target?.b, 128),
+      color_tolerance: num(local.tolerance, 28),
       cx: num(local.cx, 0.5),
       cy: num(local.cy, 0.5),
       rx: num(local.rx, 0.25),

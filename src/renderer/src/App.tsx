@@ -17,6 +17,7 @@ function App(): React.JSX.Element {
   const [loading, setLoading] = useState(false)
   const [localAdjs, setLocalAdjs] = useState<LocalAdjustment[]>([])
   const [selectedLocalId, setSelectedLocalId] = useState<number | null>(null)
+  const [colorPickLocalId, setColorPickLocalId] = useState<number | null>(null)
   const previewRevision = useRef(0)
   const [, setPreviewRev] = useState(0)
   const localPersistTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
@@ -45,6 +46,7 @@ function App(): React.JSX.Element {
   const handleSelectPhoto = useCallback(async (photo: Photo) => {
     setSelectedPhoto(photo)
     setSelectedLocalId(null)
+    setColorPickLocalId(null)
     setViewMode('detail')
     const adjs = await window.api.getLocalAdjs(photo.id) as LocalAdjustment[]
     setLocalAdjs(adjs)
@@ -85,6 +87,19 @@ function App(): React.JSX.Element {
         return nextAdj
       })
       if (nextAdj) scheduleLocalPersist(nextAdj, refreshPreview)
+      return next
+    })
+  }, [scheduleLocalPersist])
+
+  const handlePickLocalColor = useCallback((id: number, r: number, g: number, b: number) => {
+    setLocalAdjs((prev) => {
+      let nextAdj: LocalAdjustment | null = null
+      const next = prev.map((a) => {
+        if (a.id !== id) return a
+        nextAdj = { ...a, target_r: r, target_g: g, target_b: b }
+        return nextAdj
+      })
+      if (nextAdj) scheduleLocalPersist(nextAdj, true)
       return next
     })
   }, [scheduleLocalPersist])
@@ -144,17 +159,22 @@ function App(): React.JSX.Element {
                     previewRevision={previewRevision.current}
                     localAdjs={localAdjs}
                     selectedLocalId={selectedLocalId}
+                    colorPickLocalId={colorPickLocalId}
                     onSelectLocal={setSelectedLocalId}
                     onUpdateLocalPosition={handleUpdateLocalPosition}
                     onUpdateLocalPoints={handleUpdateLocalPoints}
+                    onPickLocalColor={handlePickLocalColor}
+                    onStopColorPick={() => setColorPickLocalId(null)}
                   />
                   <EditPanel
                     photo={selectedPhoto}
                     localAdjs={localAdjs}
                     selectedLocalId={selectedLocalId}
+                    colorPickLocalId={colorPickLocalId}
                     onEditsChanged={handleEditsChanged}
                     onLocalsChanged={setLocalAdjs}
                     onSelectLocal={setSelectedLocalId}
+                    onStartColorPick={setColorPickLocalId}
                   />
                 </>
               ) : (
