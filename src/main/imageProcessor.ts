@@ -1,6 +1,8 @@
 import sharp from 'sharp'
-import { readFileSync } from 'fs'
-import { extname } from 'path'
+import { readFileSync, unlinkSync } from 'fs'
+import { extname, basename, join } from 'path'
+import { tmpdir } from 'os'
+import { execFile } from 'child_process'
 
 export const RAW_EXTENSIONS = new Set([
   '.raw', '.cr2', '.cr3', '.nef', '.nrw', '.arw', '.srf', '.sr2',
@@ -43,10 +45,54 @@ export const DEFAULT_EDITS: EditParams = {
 }
 
 /**
+ * Converts a camera RAW file to a JPEG buffer using the platform's native tools.
+ * - macOS: uses built-in `sips`
+ * - Linux/Windows: tries `dcraw` or `rawtherapee-cli`
+ */
+async function rawToBuffer(filePath: string): Promise<Buffer> {
+  const tmpFile = join(tmpdir(), `rawlight_${Date.now()}_${basename(filePath)}.jpg`)
+
+  const runCmd = (cmd: string, args: string[]): Promise<void> =>
+    new Promise((resolve, reject) => {
+      execFile(cmd, args, { timeout: 30000 }, (err) => {
+        if (err) reject(err)
+        else resolve()
+      })
+    })
+
+  try {
+    if (process.platform === 'darwin') {
+      // sips is built into macOS — no installation required
+      await runCmd('sips', ['-s', 'format', 'jpeg', '-s', 'formatOptions', '90', filePath, '--out', tmpFile])
+    } else {
+      // Try dcraw (brew install dcraw / apt install dcraw)
+      // -c: write to stdout, -T: TIFF output, -w: camera white balance
+      await runCmd('dcraw', ['-c', '-T', '-w', '-q', '3', filePath]).catch(async () => {
+        // Fallback: rawtherapee-cli
+        await runCmd('rawtherapee-cli', ['-o', tmpFile, '-c', filePath])
+      })
+    }
+    return readFileSync(tmpFile)
+  } finally {
+    try { unlinkSync(tmpFile) } catch { /* ignore cleanup errors */ }
+  }
+}
+
+/**
+ * Returns a sharp-compatible input: Buffer for RAW files, path string for others.
+ */
+async function getSharpInput(filePath: string): Promise<Buffer | string> {
+  if (isRaw(filePath)) {
+    return rawToBuffer(filePath)
+  }
+  return filePath
+}
+
+/**
  * Generates a JPEG thumbnail (max 300px) for the grid view.
  */
 export async function generateThumbnail(filePath: string): Promise<Buffer> {
-  const input = isRaw(filePath) ? readFileSync(filePath) : filePath
+  const input = await getSharpInput(filePath)
   return sharp(input, { failOn: 'none' })
     .rotate() // auto-orient from EXIF
     .resize(300, 300, { fit: 'inside', withoutEnlargement: true })
@@ -62,7 +108,7 @@ export async function applyEdits(
   edits: EditParams,
   options: { width?: number; quality?: number } = {}
 ): Promise<Buffer> {
-  const input = isRaw(filePath) ? readFileSync(filePath) : filePath
+  const input = await getSharpInput(filePath)
 
   let pipeline = sharp(input, { failOn: 'none' }).rotate()
 
