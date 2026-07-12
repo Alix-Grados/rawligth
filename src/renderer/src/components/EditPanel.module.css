@@ -18,6 +18,38 @@
   border-bottom: 1px solid var(--border);
 }
 
+.tabs {
+  display: flex;
+  gap: 6px;
+  padding: 12px 12px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.tabBtn {
+  flex: 1;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-panel2);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  transition: border-color 0.1s, color 0.1s, background 0.1s;
+}
+
+.tabBtn:hover {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.tabBtnActive {
+  border-color: var(--accent);
+  color: var(--accent);
+  background: rgba(232, 160, 32, 0.12);
+}
+
 .group {
   padding: 12px 16px;
   border-bottom: 1px solid var(--border);
