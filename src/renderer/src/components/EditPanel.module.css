@@ -1,0 +1,116 @@
+.panel {
+  width: var(--edit-panel-width);
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  flex-shrink: 0;
+}
+
+.panelTitle {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+  padding: 14px 16px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.group {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.groupTitle {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--text-muted);
+  margin-bottom: 10px;
+}
+
+.sliderRow {
+  margin-bottom: 10px;
+}
+
+.sliderHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 4px;
+}
+
+.sliderLabel {
+  font-size: 11px;
+  color: var(--text-label);
+}
+
+.sliderValue {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text);
+  min-width: 32px;
+  text-align: right;
+}
+
+.actions {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.resetBtn {
+  width: 100%;
+  padding: 6px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 11px;
+  transition: border-color 0.1s, color 0.1s;
+}
+
+.resetBtn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.exportSection {
+  padding: 12px 16px;
+}
+
+.exportBtns {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.exportBtn {
+  flex: 1;
+  padding: 7px;
+  border-radius: var(--radius);
+  background: var(--bg-panel2);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  font-weight: 600;
+  transition: background 0.1s, border-color 0.1s;
+}
+
+.exportBtn:hover:not(:disabled) {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #111;
+}
+
+.exportBtn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.exportMsg {
+  margin-top: 8px;
+  font-size: 11px;
+  color: var(--accent);
+  word-break: break-all;
+}

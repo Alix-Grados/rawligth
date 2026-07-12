@@ -1,0 +1,94 @@
+.sidebar {
+  width: var(--sidebar-width);
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 12px 8px;
+  flex-shrink: 0;
+  overflow-y: auto;
+}
+
+.logo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px 12px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 8px;
+}
+
+.logoIcon {
+  font-size: 20px;
+  color: var(--accent);
+}
+
+.logoName {
+  font-size: 16px;
+  font-weight: 700;
+  color: var(--text);
+  letter-spacing: 0.5px;
+}
+
+.importBtn {
+  width: 100%;
+  padding: 8px 12px;
+  background: var(--accent);
+  color: #111;
+  border-radius: var(--radius);
+  font-weight: 600;
+  font-size: 12px;
+  text-align: center;
+  transition: background 0.15s;
+  margin-bottom: 8px;
+}
+
+.importBtn:hover {
+  background: var(--accent-hover);
+}
+
+.section {
+  margin-top: 8px;
+}
+
+.sectionTitle {
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  padding: 4px 8px;
+}
+
+.folderItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.1s;
+  overflow: hidden;
+}
+
+.folderItem:hover {
+  background: var(--bg-hover);
+}
+
+.folderItem.active {
+  background: rgba(232, 160, 32, 0.15);
+  color: var(--accent);
+}
+
+.folderIcon {
+  font-size: 13px;
+  flex-shrink: 0;
+}
+
+.folderName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+}

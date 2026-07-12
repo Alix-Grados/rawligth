@@ -1,0 +1,97 @@
+.app {
+  display: flex;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.content {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+
+.detailWrapper {
+  flex: 1;
+  display: flex;
+  overflow: hidden;
+}
+
+.loadingOverlay {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 14px;
+  color: var(--text-muted);
+  z-index: 10;
+}
+
+.noSelection {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+  font-size: 14px;
+}
+
+.filmstrip {
+  height: 80px;
+  background: #111;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 4px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-shrink: 0;
+}
+
+.strip {
+  width: 112px;
+  height: 72px;
+  flex-shrink: 0;
+  border-radius: 4px;
+  overflow: hidden;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: border-color 0.1s;
+  background: var(--bg-panel2);
+}
+
+.strip:hover {
+  border-color: #555;
+}
+
+.strip.stripActive {
+  border-color: var(--accent);
+}
+
+.strip img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+
+.stripEmpty {
+  width: 100%;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  color: var(--text-muted);
+  font-weight: 600;
+}
