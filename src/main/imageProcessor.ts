@@ -131,6 +131,25 @@ function applyEditsToPipeline(
   edits: EditParams,
   options: { width?: number } = {}
 ): Sharp {
+  const toNum = (v: unknown): number => {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : 0
+  }
+  const e: EditParams = {
+    exposure: toNum(edits.exposure),
+    contrast: toNum(edits.contrast),
+    highlights: toNum(edits.highlights),
+    shadows: toNum(edits.shadows),
+    whites: toNum(edits.whites),
+    blacks: toNum(edits.blacks),
+    temperature: toNum(edits.temperature),
+    tint: toNum(edits.tint),
+    saturation: toNum(edits.saturation),
+    vibrance: toNum(edits.vibrance),
+    sharpness: toNum(edits.sharpness),
+    noise_reduction: toNum(edits.noise_reduction),
+  }
+
   // Force 8-bit sRGB immediately — TIFF from sips is rgb16 (ushort).
   // Without this, the blending step gets 16-bit raw data and corrupts the output.
   let pipeline = sharp(input, { failOn: 'none' }).rotate().toColorspace('srgb')
@@ -139,14 +158,14 @@ function applyEditsToPipeline(
     pipeline = pipeline.resize(options.width, undefined, { withoutEnlargement: true })
   }
 
-  if (edits.exposure !== 0) {
-    const factor = Math.pow(2, edits.exposure)
+  if (e.exposure !== 0) {
+    const factor = Math.pow(2, e.exposure)
     pipeline = pipeline.linear(factor, 0)
   }
 
-  const brightnessFactor = 1 + (edits.whites - edits.blacks) / 200
-  const saturationFactor = 1 + edits.saturation / 100
-  const hueDegrees = edits.tint * 0.5
+  const brightnessFactor = 1 + (e.whites - e.blacks) / 200
+  const saturationFactor = 1 + e.saturation / 100
+  const hueDegrees = e.tint * 0.5
 
   if (brightnessFactor !== 1 || saturationFactor !== 1 || hueDegrees !== 0) {
     pipeline = pipeline.modulate({
@@ -156,35 +175,35 @@ function applyEditsToPipeline(
     })
   }
 
-  if (edits.contrast !== 0) {
-    const slope = 1 + edits.contrast / 100
+  if (e.contrast !== 0) {
+    const slope = 1 + e.contrast / 100
     const intercept = 128 * (1 - slope) / 255
     pipeline = pipeline.linear(slope, intercept)
   }
 
-  if (edits.highlights !== 0) {
-    if (edits.highlights > 0) {
-      pipeline = pipeline.linear(1 + edits.highlights / 500, 0)
+  if (e.highlights !== 0) {
+    if (e.highlights > 0) {
+      pipeline = pipeline.linear(1 + e.highlights / 500, 0)
     } else {
-      pipeline = pipeline.gamma(Math.min(3, 1 + Math.abs(edits.highlights) / 100))
+      pipeline = pipeline.gamma(Math.min(3, 1 + Math.abs(e.highlights) / 100))
     }
   }
 
-  if (edits.shadows !== 0) {
-    if (edits.shadows > 0) {
-      pipeline = pipeline.linear(1, edits.shadows / 1000)
+  if (e.shadows !== 0) {
+    if (e.shadows > 0) {
+      pipeline = pipeline.linear(1, e.shadows / 1000)
     } else {
-      pipeline = pipeline.gamma(Math.min(3, 1 + Math.abs(edits.shadows) / 100))
+      pipeline = pipeline.gamma(Math.min(3, 1 + Math.abs(e.shadows) / 100))
     }
   }
 
-  if (edits.sharpness > 0) {
-    const sigma = 0.5 + (edits.sharpness / 100) * 1.5
+  if (e.sharpness > 0) {
+    const sigma = 0.5 + (e.sharpness / 100) * 1.5
     pipeline = pipeline.sharpen({ sigma })
   }
 
-  if (edits.noise_reduction > 0) {
-    pipeline = pipeline.blur(Math.max(0.3, (edits.noise_reduction / 100) * 1.5))
+  if (e.noise_reduction > 0) {
+    pipeline = pipeline.blur(Math.max(0.3, (e.noise_reduction / 100) * 1.5))
   }
 
   return pipeline
@@ -271,31 +290,31 @@ export async function applyEditsWithLocals(
   localAdjs: LocalAdjustmentData[],
   options: { width?: number; quality?: number } = {}
 ): Promise<Buffer> {
-  // Decode RAW once — this is the expensive step for ARW/CR2/NEF etc.
   const decoded = await getSharpInput(filePath)
+  const toNum = (v: unknown): number => {
+    const n = Number(v)
+    return Number.isFinite(n) ? n : 0
+  }
 
-  // Apply global edits to get the base layer
   let baseBuffer = await applyEditsToPipeline(decoded, globalEdits, options).png().toBuffer()
 
   for (const adj of localAdjs) {
     const combined: EditParams = {
-      exposure: globalEdits.exposure + adj.exposure,
-      contrast: globalEdits.contrast + adj.contrast,
-      highlights: globalEdits.highlights + adj.highlights,
-      shadows: globalEdits.shadows + adj.shadows,
-      whites: globalEdits.whites + adj.whites,
-      blacks: globalEdits.blacks + adj.blacks,
-      temperature: globalEdits.temperature + adj.temperature,
-      tint: globalEdits.tint + adj.tint,
-      saturation: globalEdits.saturation + adj.saturation,
-      vibrance: globalEdits.vibrance + adj.vibrance,
-      sharpness: globalEdits.sharpness + adj.sharpness,
-      noise_reduction: globalEdits.noise_reduction + adj.noise_reduction,
+      exposure: toNum(globalEdits.exposure) + toNum(adj.exposure),
+      contrast: toNum(globalEdits.contrast) + toNum(adj.contrast),
+      highlights: toNum(globalEdits.highlights) + toNum(adj.highlights),
+      shadows: toNum(globalEdits.shadows) + toNum(adj.shadows),
+      whites: toNum(globalEdits.whites) + toNum(adj.whites),
+      blacks: toNum(globalEdits.blacks) + toNum(adj.blacks),
+      temperature: toNum(globalEdits.temperature) + toNum(adj.temperature),
+      tint: toNum(globalEdits.tint) + toNum(adj.tint),
+      saturation: toNum(globalEdits.saturation) + toNum(adj.saturation),
+      vibrance: toNum(globalEdits.vibrance) + toNum(adj.vibrance),
+      sharpness: toNum(globalEdits.sharpness) + toNum(adj.sharpness),
+      noise_reduction: toNum(globalEdits.noise_reduction) + toNum(adj.noise_reduction),
     }
 
-    // Reuse the same decoded buffer — no second sips call
     const localBuffer = await applyEditsToPipeline(decoded, combined, options).png().toBuffer()
-
     const meta = await sharp(baseBuffer).metadata()
     const w = meta.width!
     const h = meta.height!
@@ -307,6 +326,7 @@ export async function applyEditsWithLocals(
 
     const channels = baseRaw.info.channels
     const mask = generateRadialMask(w, h, adj)
+
     const outBuf = Buffer.alloc(w * h * channels)
 
     for (let i = 0; i < w * h; i++) {
