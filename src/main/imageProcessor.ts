@@ -167,5 +167,136 @@ export async function applyEdits(
     pipeline = pipeline.blur(Math.max(0.3, blurSigma))
   }
 
-  return pipeline.jpeg({ quality: options.quality ?? 90 }).toBuffer()
+  return pipeline.png().toBuffer()
+}
+
+export interface LocalAdjustmentData {
+  id: number
+  photo_id: number
+  cx: number
+  cy: number
+  rx: number
+  ry: number
+  feather: number
+  invert: number // 0 | 1 from SQLite
+  exposure: number
+  contrast: number
+  highlights: number
+  shadows: number
+  whites: number
+  blacks: number
+  temperature: number
+  tint: number
+  saturation: number
+  vibrance: number
+  sharpness: number
+  noise_reduction: number
+}
+
+/**
+ * Generates a grayscale radial gradient mask (Buffer of width*height bytes, 0–255).
+ * Values represent how strongly the local adjustments apply at each pixel.
+ */
+function generateRadialMask(width: number, height: number, adj: LocalAdjustmentData): Buffer {
+  const buf = Buffer.alloc(width * height)
+  const centerX = adj.cx * width
+  const centerY = adj.cy * height
+  const radiusX = Math.max(1, adj.rx * width)
+  const radiusY = Math.max(1, adj.ry * height)
+  const feather = Math.max(0.001, adj.feather)
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      const dx = (x - centerX) / radiusX
+      const dy = (y - centerY) / radiusY
+      const dist = Math.sqrt(dx * dx + dy * dy)
+
+      let alpha: number
+      const innerEdge = 1 - feather
+      if (dist <= innerEdge) {
+        alpha = 255
+      } else if (dist >= 1) {
+        alpha = 0
+      } else {
+        const t = (dist - innerEdge) / feather
+        alpha = Math.round(255 * 0.5 * (1 + Math.cos(t * Math.PI)))
+      }
+
+      buf[y * width + x] = adj.invert ? 255 - alpha : alpha
+    }
+  }
+  return buf
+}
+
+/**
+ * Applies global edits, then blends local (radial) adjustments on top.
+ * Returns a final JPEG buffer.
+ */
+export async function applyEditsWithLocals(
+  filePath: string,
+  globalEdits: EditParams,
+  localAdjs: LocalAdjustmentData[],
+  options: { width?: number; quality?: number } = {}
+): Promise<Buffer> {
+  let baseBuffer = await applyEdits(filePath, globalEdits, options)
+
+  for (const adj of localAdjs) {
+    const combined: EditParams = {
+      exposure: globalEdits.exposure + adj.exposure,
+      contrast: globalEdits.contrast + adj.contrast,
+      highlights: globalEdits.highlights + adj.highlights,
+      shadows: globalEdits.shadows + adj.shadows,
+      whites: globalEdits.whites + adj.whites,
+      blacks: globalEdits.blacks + adj.blacks,
+      temperature: globalEdits.temperature + adj.temperature,
+      tint: globalEdits.tint + adj.tint,
+      saturation: globalEdits.saturation + adj.saturation,
+      vibrance: globalEdits.vibrance + adj.vibrance,
+      sharpness: globalEdits.sharpness + adj.sharpness,
+      noise_reduction: globalEdits.noise_reduction + adj.noise_reduction,
+    }
+
+    const localBuffer = await applyEdits(filePath, combined, options)
+
+    // Get dimensions from base
+    const meta = await sharp(baseBuffer).metadata()
+    const w = meta.width!
+    const h = meta.height!
+
+    // Blend base + local using the radial mask (manual per-pixel alpha blend)
+    const [baseRaw, localRaw] = await Promise.all([
+      sharp(baseBuffer).raw().toBuffer({ resolveWithObject: true }),
+      sharp(localBuffer).raw().toBuffer({ resolveWithObject: true }),
+    ])
+
+    const channels = baseRaw.info.channels
+    const mask = generateRadialMask(w, h, adj)
+    const outBuf = Buffer.alloc(w * h * channels)
+
+    for (let i = 0; i < w * h; i++) {
+      const alpha = mask[i] / 255
+      for (let c = 0; c < channels; c++) {
+        outBuf[i * channels + c] = Math.round(
+          baseRaw.data[i * channels + c] * (1 - alpha) +
+          localRaw.data[i * channels + c] * alpha
+        )
+      }
+    }
+
+    baseBuffer = await sharp(outBuf, { raw: { width: w, height: h, channels } }).png().toBuffer()
+  }
+
+  return sharp(baseBuffer).jpeg({ quality: options.quality ?? 90 }).toBuffer()
+}
+
+/**
+ * Public export: applies global edits only (used where no locals needed).
+ */
+export async function applyEditsJpeg(
+  filePath: string,
+  edits: EditParams,
+  options: { width?: number; quality?: number } = {}
+): Promise<Buffer> {
+  const png = await applyEdits(filePath, edits, options)
+  return sharp(png).jpeg({ quality: options.quality ?? 90 }).toBuffer()
 }

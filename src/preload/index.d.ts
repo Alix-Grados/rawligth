@@ -34,6 +34,29 @@ export interface Photo {
   added_at: string
 }
 
+export interface LocalAdjustment {
+  id: number
+  photo_id: number
+  cx: number
+  cy: number
+  rx: number
+  ry: number
+  feather: number
+  invert: number // 0 | 1
+  exposure: number
+  contrast: number
+  highlights: number
+  shadows: number
+  whites: number
+  blacks: number
+  temperature: number
+  tint: number
+  saturation: number
+  vibrance: number
+  sharpness: number
+  noise_reduction: number
+}
+
 export interface RawlightAPI {
   openFolder(): Promise<string | null>
   importFolder(folderPath: string): Promise<number[]>
@@ -43,6 +66,10 @@ export interface RawlightAPI {
   saveEdits(photoId: number, edits: EditParams): Promise<boolean>
   resetEdits(photoId: number): Promise<EditParams>
   exportImage(photoId: number, options: { format: 'jpeg' | 'png'; quality: number }): Promise<{ success: boolean; path?: string; error?: string }>
+  getLocalAdjs(photoId: number): Promise<LocalAdjustment[]>
+  createLocalAdj(photoId: number): Promise<LocalAdjustment>
+  updateLocalAdj(data: LocalAdjustment): Promise<boolean>
+  deleteLocalAdj(id: number): Promise<boolean>
 }
 
 declare global {

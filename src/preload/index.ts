@@ -11,6 +11,11 @@ const api = {
   resetEdits: (photoId: number): Promise<unknown> => ipcRenderer.invoke('edits:reset', photoId),
   exportImage: (photoId: number, options: { format: 'jpeg' | 'png'; quality: number }): Promise<{ success: boolean; path?: string; error?: string }> =>
     ipcRenderer.invoke('image:export', photoId, options),
+  // Local adjustments
+  getLocalAdjs: (photoId: number): Promise<unknown[]> => ipcRenderer.invoke('local:getByPhoto', photoId),
+  createLocalAdj: (photoId: number): Promise<unknown> => ipcRenderer.invoke('local:create', photoId),
+  updateLocalAdj: (data: unknown): Promise<boolean> => ipcRenderer.invoke('local:update', data),
+  deleteLocalAdj: (id: number): Promise<boolean> => ipcRenderer.invoke('local:delete', id),
 }
 
 if (process.contextIsolated) {

@@ -3,7 +3,7 @@ import { readdirSync, statSync, existsSync } from 'fs'
 import { join, basename, dirname } from 'path'
 import exifr from 'exifr'
 import { stmts } from './db'
-import { isSupported, generateThumbnail, applyEdits, DEFAULT_EDITS, EditParams } from './imageProcessor'
+import { isSupported, generateThumbnail, applyEditsWithLocals, DEFAULT_EDITS, EditParams, LocalAdjustmentData } from './imageProcessor'
 import type { SaveDialogOptions } from 'electron'
 
 export function registerIpcHandlers(): void {
@@ -116,7 +116,8 @@ export function registerIpcHandlers(): void {
       : DEFAULT_EDITS
 
     try {
-      const buffer = await applyEdits(String(photo.file_path), edits, { width })
+      const localAdjs = stmts.getLocalsByPhotoId.all(photoId) as LocalAdjustmentData[]
+      const buffer = await applyEditsWithLocals(String(photo.file_path), edits, localAdjs, { width })
       return `data:image/jpeg;base64,${buffer.toString('base64')}`
     } catch {
       return null
@@ -193,11 +194,32 @@ export function registerIpcHandlers(): void {
 
     try {
       const { writeFileSync } = await import('fs')
-      const buffer = await applyEdits(String(photo.file_path), edits, { quality: exportOptions.quality })
+      const localAdjs = stmts.getLocalsByPhotoId.all(photoId) as LocalAdjustmentData[]
+      const buffer = await applyEditsWithLocals(String(photo.file_path), edits, localAdjs, { quality: exportOptions.quality })
       writeFileSync(result.filePath, buffer)
       return { success: true, path: result.filePath }
     } catch (err) {
       return { success: false, error: String(err) }
     }
+  })
+
+  // ---------- Local adjustments ----------
+  ipcMain.handle('local:getByPhoto', (_, photoId: number) => {
+    return stmts.getLocalsByPhotoId.all(photoId)
+  })
+
+  ipcMain.handle('local:create', (_, photoId: number) => {
+    const rows = stmts.insertLocal.all(photoId) as LocalAdjustmentData[]
+    return rows[0]
+  })
+
+  ipcMain.handle('local:update', (_, data: LocalAdjustmentData) => {
+    stmts.updateLocal.run(data)
+    return true
+  })
+
+  ipcMain.handle('local:delete', (_, id: number) => {
+    stmts.deleteLocal.run(id)
+    return true
   })
 }

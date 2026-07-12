@@ -47,6 +47,30 @@ db.exec(`
     updated_at TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (photo_id) REFERENCES photos(id) ON DELETE CASCADE
   );
+
+  CREATE TABLE IF NOT EXISTS local_adjustments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    photo_id INTEGER NOT NULL,
+    cx REAL NOT NULL DEFAULT 0.5,
+    cy REAL NOT NULL DEFAULT 0.5,
+    rx REAL NOT NULL DEFAULT 0.25,
+    ry REAL NOT NULL DEFAULT 0.2,
+    feather REAL NOT NULL DEFAULT 0.5,
+    invert INTEGER NOT NULL DEFAULT 0,
+    exposure REAL NOT NULL DEFAULT 0,
+    contrast REAL NOT NULL DEFAULT 0,
+    highlights REAL NOT NULL DEFAULT 0,
+    shadows REAL NOT NULL DEFAULT 0,
+    whites REAL NOT NULL DEFAULT 0,
+    blacks REAL NOT NULL DEFAULT 0,
+    temperature INTEGER NOT NULL DEFAULT 0,
+    tint INTEGER NOT NULL DEFAULT 0,
+    saturation REAL NOT NULL DEFAULT 0,
+    vibrance REAL NOT NULL DEFAULT 0,
+    sharpness REAL NOT NULL DEFAULT 0,
+    noise_reduction REAL NOT NULL DEFAULT 0,
+    FOREIGN KEY (photo_id) REFERENCES photos(id) ON DELETE CASCADE
+  );
 `)
 
 export const stmts = {
@@ -68,6 +92,17 @@ export const stmts = {
       updated_at = datetime('now')
   `),
   deletePhoto: db.prepare(`DELETE FROM photos WHERE id = ?`),
+  getLocalsByPhotoId: db.prepare(`SELECT * FROM local_adjustments WHERE photo_id = ? ORDER BY id`),
+  insertLocal: db.prepare(`INSERT INTO local_adjustments (photo_id) VALUES (?) RETURNING *`),
+  updateLocal: db.prepare(`
+    UPDATE local_adjustments SET
+      cx=@cx, cy=@cy, rx=@rx, ry=@ry, feather=@feather, invert=@invert,
+      exposure=@exposure, contrast=@contrast, highlights=@highlights, shadows=@shadows,
+      whites=@whites, blacks=@blacks, temperature=@temperature, tint=@tint,
+      saturation=@saturation, vibrance=@vibrance, sharpness=@sharpness, noise_reduction=@noise_reduction
+    WHERE id=@id
+  `),
+  deleteLocal: db.prepare(`DELETE FROM local_adjustments WHERE id = ?`),
 }
 
 export default db

@@ -114,3 +114,93 @@
   color: var(--accent);
   word-break: break-all;
 }
+
+/* Local adjustments */
+.localHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+
+.addLocalBtn {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--accent);
+  color: #111;
+  font-size: 16px;
+  font-weight: 700;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: background 0.1s;
+}
+
+.addLocalBtn:hover {
+  background: var(--accent-hover);
+}
+
+.localItem {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border-radius: var(--radius);
+  cursor: pointer;
+  border: 1px solid transparent;
+  transition: border-color 0.1s, background 0.1s;
+}
+
+.localItem:hover {
+  background: var(--bg-hover);
+}
+
+.localItem.localItemActive {
+  border-color: var(--accent);
+  background: rgba(232, 160, 32, 0.08);
+}
+
+.localIcon {
+  font-size: 14px;
+  color: var(--accent);
+  flex-shrink: 0;
+}
+
+.localName {
+  flex: 1;
+  font-size: 12px;
+}
+
+.localDelete {
+  font-size: 10px;
+  color: var(--text-muted);
+  padding: 2px 4px;
+  border-radius: 3px;
+  transition: color 0.1s, background 0.1s;
+}
+
+.localDelete:hover {
+  color: #e05050;
+  background: rgba(224, 80, 80, 0.1);
+}
+
+.localSliders {
+  border-top: 1px solid var(--border);
+}
+
+.invertToggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-label);
+  cursor: pointer;
+}
+
+.invertToggle input {
+  accent-color: var(--accent);
+  cursor: pointer;
+}
