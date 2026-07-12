@@ -44,8 +44,8 @@ export function registerIpcHandlers(): void {
       let thumbnail: Buffer | null = null
       try {
         thumbnail = await generateThumbnail(filePath)
-      } catch {
-        // skip thumbnail on failure
+      } catch (err) {
+        console.error('[rawlight] generateThumbnail failed for', filePath, err)
       }
 
       // Parse EXIF
@@ -127,7 +127,8 @@ export function registerIpcHandlers(): void {
       const localAdjs = stmts.getLocalsByPhotoId.all(photoId) as LocalAdjustmentData[]
       const buffer = await applyEditsWithLocals(String(photo.file_path), edits, localAdjs, { width })
       return `data:image/jpeg;base64,${buffer.toString('base64')}`
-    } catch {
+    } catch (err) {
+      console.error('[rawlight] getPreview failed for photo', photoId, err)
       return null
     }
   })

@@ -1,5 +1,5 @@
 import sharp from 'sharp'
-import { readFileSync, unlinkSync } from 'fs'
+import { existsSync, readFileSync, unlinkSync } from 'fs'
 import { extname, basename, join } from 'path'
 import { tmpdir } from 'os'
 import { execFile } from 'child_process'
@@ -46,15 +46,18 @@ export const DEFAULT_EDITS: EditParams = {
 
 /**
  * Converts a camera RAW file to a high-quality raster buffer using native tools.
- * - macOS: uses built-in `sips`
+ * When maxSize is provided (for thumbnails), sips outputs a smaller JPEG to avoid
+ * loading a 187MB TIFF into memory.
+ * - macOS: uses built-in `/usr/bin/sips`
  * - Linux/Windows: tries `dcraw` or `rawtherapee-cli`
  */
-async function rawToBuffer(filePath: string): Promise<Buffer> {
-  const tmpFile = join(tmpdir(), `rawlight_${Date.now()}_${basename(filePath)}.tiff`)
+async function rawToBuffer(filePath: string, maxSize?: number): Promise<Buffer> {
+  const ext = maxSize ? 'jpg' : 'tiff'
+  const tmpFile = join(tmpdir(), `rawlight_${Date.now()}_${basename(filePath)}.${ext}`)
 
   const runCmd = (cmd: string, args: string[]): Promise<void> =>
     new Promise((resolve, reject) => {
-      execFile(cmd, args, { timeout: 30000 }, (err) => {
+      execFile(cmd, args, { timeout: 60000 }, (err) => {
         if (err) reject(err)
         else resolve()
       })
@@ -70,8 +73,13 @@ async function rawToBuffer(filePath: string): Promise<Buffer> {
 
   try {
     if (process.platform === 'darwin') {
-      // Keep a high-quality intermediary (TIFF) to avoid RAW->JPEG losses.
-      await runCmd('sips', ['-s', 'format', 'tiff', filePath, '--out', tmpFile])
+      // Use absolute path — Electron's env PATH may not include /usr/bin.
+      // For thumbnails: sips resizes directly, saving ~187MB of memory per photo.
+      const sipsArgs = maxSize
+        ? ['-s', 'format', 'jpeg', '-s', 'formatOptions', '85', '-Z', String(maxSize), filePath, '--out', tmpFile]
+        : ['-s', 'format', 'tiff', filePath, '--out', tmpFile]
+      await runCmd('/usr/bin/sips', sipsArgs)
+      if (!existsSync(tmpFile)) throw new Error(`sips did not produce output for ${filePath}`)
       return readFileSync(tmpFile)
     } else {
       // Try dcraw first: output TIFF to stdout.
@@ -92,10 +100,11 @@ async function rawToBuffer(filePath: string): Promise<Buffer> {
 
 /**
  * Returns a sharp-compatible input: Buffer for RAW files, path string for others.
+ * maxSize: if set, the RAW is decoded at a lower resolution (for thumbnails).
  */
-async function getSharpInput(filePath: string): Promise<Buffer | string> {
+async function getSharpInput(filePath: string, maxSize?: number): Promise<Buffer | string> {
   if (isRaw(filePath)) {
-    return rawToBuffer(filePath)
+    return rawToBuffer(filePath, maxSize)
   }
   return filePath
 }
@@ -104,9 +113,10 @@ async function getSharpInput(filePath: string): Promise<Buffer | string> {
  * Generates a JPEG thumbnail (max 300px) for the grid view.
  */
 export async function generateThumbnail(filePath: string): Promise<Buffer> {
-  const input = await getSharpInput(filePath)
+  // Pass maxSize=600: sips resizes in-process, avoiding loading 187MB TIFF for a 300px thumb
+  const input = await getSharpInput(filePath, 600)
   return sharp(input, { failOn: 'none' })
-    .rotate() // auto-orient from EXIF
+    .rotate()
     .resize(300, 300, { fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 75 })
     .toBuffer()
