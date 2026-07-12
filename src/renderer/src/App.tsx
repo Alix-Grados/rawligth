@@ -102,8 +102,8 @@ function App(): React.JSX.Element {
               {selectedPhoto ? (
                 <>
                   <DetailView
-                    key={`${selectedPhoto.id}-${previewRevision.current}`}
                     photo={selectedPhoto}
+                    previewRevision={previewRevision.current}
                     localAdjs={localAdjs}
                     selectedLocalId={selectedLocalId}
                     onSelectLocal={setSelectedLocalId}

@@ -11,6 +11,7 @@ interface ImageBounds {
 
 interface Props {
   photo: Photo
+  previewRevision: number
   localAdjs: LocalAdjustment[]
   selectedLocalId: number | null
   onSelectLocal: (id: number) => void
@@ -23,24 +24,35 @@ type DragState =
   | { type: 'resize-y'; id: number; startRy: number; startMy: number; sign: 1 | -1 }
   | null
 
-export function DetailView({ photo, localAdjs, selectedLocalId, onSelectLocal, onUpdateLocalPosition }: Props): React.JSX.Element {
+export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId, onSelectLocal, onUpdateLocalPosition }: Props): React.JSX.Element {
+  // src always holds the LAST successfully loaded image — never set to null
   const [src, setSrc] = useState<string | null>(photo.thumbnail)
+  const [loading, setLoading] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const [imgBounds, setImgBounds] = useState<ImageBounds | null>(null)
   const dragRef = useRef<DragState>(null)
+  // Track the last photo id to reset src when switching photos
+  const lastPhotoId = useRef<number | null>(null)
 
-  // Load preview
+  // Load preview — keep old src visible until new one arrives
   useEffect(() => {
-    setSrc(photo.thumbnail)
+    // Only reset to thumbnail when switching photos, not on edits refresh
+    if (lastPhotoId.current !== photo.id) {
+      lastPhotoId.current = photo.id
+      setSrc(photo.thumbnail)
+    }
+
+    setLoading(true)
     let cancelled = false
     ;(async () => {
       const preview = await window.api.getPreview(photo.id, 1600)
       if (cancelled) return
       if (preview) setSrc(preview)
+      setLoading(false)
     })()
     return () => { cancelled = true }
-  }, [photo.id])
+  }, [photo.id, previewRevision])
 
   // Compute actual image bounds within container (object-fit: contain)
   const updateBounds = useCallback(() => {
@@ -100,6 +112,9 @@ export function DetailView({ photo, localAdjs, selectedLocalId, onSelectLocal, o
         ) : (
           <div className={styles.loading}>Chargement…</div>
         )}
+
+        {/* Subtle loading indicator — shown over existing image, not replacing it */}
+        {loading && src && <div className={styles.loadingDot} />}
 
         {/* SVG overlay for radial filters */}
         {imgBounds && localAdjs.length > 0 && (
