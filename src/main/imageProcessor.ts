@@ -299,22 +299,24 @@ export async function applyEditsWithLocals(
   let baseBuffer = await applyEditsToPipeline(decoded, globalEdits, options).png().toBuffer()
 
   for (const adj of localAdjs) {
-    const combined: EditParams = {
-      exposure: toNum(globalEdits.exposure) + toNum(adj.exposure),
-      contrast: toNum(globalEdits.contrast) + toNum(adj.contrast),
-      highlights: toNum(globalEdits.highlights) + toNum(adj.highlights),
-      shadows: toNum(globalEdits.shadows) + toNum(adj.shadows),
-      whites: toNum(globalEdits.whites) + toNum(adj.whites),
-      blacks: toNum(globalEdits.blacks) + toNum(adj.blacks),
-      temperature: toNum(globalEdits.temperature) + toNum(adj.temperature),
-      tint: toNum(globalEdits.tint) + toNum(adj.tint),
-      saturation: toNum(globalEdits.saturation) + toNum(adj.saturation),
-      vibrance: toNum(globalEdits.vibrance) + toNum(adj.vibrance),
-      sharpness: toNum(globalEdits.sharpness) + toNum(adj.sharpness),
-      noise_reduction: toNum(globalEdits.noise_reduction) + toNum(adj.noise_reduction),
+    // Apply only local delta on top of the already-rendered global image.
+    // This is more stable for RAW workflows than recomputing (global+local) from source.
+    const localDelta: EditParams = {
+      exposure: toNum(adj.exposure),
+      contrast: toNum(adj.contrast),
+      highlights: toNum(adj.highlights),
+      shadows: toNum(adj.shadows),
+      whites: toNum(adj.whites),
+      blacks: toNum(adj.blacks),
+      temperature: toNum(adj.temperature),
+      tint: toNum(adj.tint),
+      saturation: toNum(adj.saturation),
+      vibrance: toNum(adj.vibrance),
+      sharpness: toNum(adj.sharpness),
+      noise_reduction: toNum(adj.noise_reduction),
     }
 
-    const localBuffer = await applyEditsToPipeline(decoded, combined, options).png().toBuffer()
+    const localBuffer = await applyEditsToPipeline(baseBuffer, localDelta, {}).png().toBuffer()
     const meta = await sharp(baseBuffer).metadata()
     const w = meta.width!
     const h = meta.height!
