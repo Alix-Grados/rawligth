@@ -158,18 +158,17 @@ function applyEditsToPipeline(
     pipeline = pipeline.resize(options.width, undefined, { withoutEnlargement: true })
   }
 
-  if (e.exposure !== 0) {
-    const factor = Math.pow(2, e.exposure)
-    pipeline = pipeline.linear(factor, 0)
-  }
-
-  const brightnessFactor = 1 + (e.whites - e.blacks) / 200
+  // Exposure and whites/blacks are applied through brightness modulation.
+  // This is more stable across RAW->TIFF->PNG pipelines than linear() scaling.
+  const exposureFactor = Math.pow(2, e.exposure)
+  const toneBrightness = 1 + (e.whites - e.blacks) / 200
+  const brightnessFactor = exposureFactor * toneBrightness
   const saturationFactor = 1 + e.saturation / 100
   const hueDegrees = e.tint * 0.5
 
   if (brightnessFactor !== 1 || saturationFactor !== 1 || hueDegrees !== 0) {
     pipeline = pipeline.modulate({
-      brightness: Math.max(0.1, brightnessFactor),
+      brightness: Math.max(0.05, Math.min(8, brightnessFactor)),
       saturation: Math.max(0, saturationFactor),
       hue: hueDegrees,
     })
