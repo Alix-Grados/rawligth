@@ -51,9 +51,31 @@ export const DEFAULT_EDITS: EditParams = {
  * - macOS: uses built-in `/usr/bin/sips`
  * - Linux/Windows: tries `dcraw` or `rawtherapee-cli`
  */
+// dcraw may live in Homebrew paths that Electron's sandboxed env doesn't see.
+function findDcraw(): string {
+  const { execFileSync } = require('child_process') as typeof import('child_process')
+  for (const candidate of [
+    '/opt/homebrew/bin/dcraw',
+    '/usr/local/bin/dcraw',
+    'dcraw',
+  ]) {
+    try { execFileSync(candidate, ['--help'], { timeout: 2000, stdio: 'ignore' }); return candidate } catch { /* next */ }
+  }
+  return 'dcraw'
+}
+const DCRAW_BIN = findDcraw()
+
 async function rawToBuffer(filePath: string, maxSize?: number): Promise<Buffer> {
-  const ext = maxSize ? 'jpg' : 'tiff'
-  const tmpFile = join(tmpdir(), `rawlight_${Date.now()}_${basename(filePath)}.${ext}`)
+  const tmpFile = join(tmpdir(), `rawlight_${Date.now()}_${basename(filePath)}.tiff`)
+  const ext = extname(filePath).toLowerCase()
+
+  const runCmdOut = (cmd: string, args: string[]): Promise<Buffer> =>
+    new Promise((resolve, reject) => {
+      execFile(cmd, args, { timeout: 60000, encoding: 'buffer', maxBuffer: 256 * 1024 * 1024 }, (err, stdout) => {
+        if (err) reject(err)
+        else resolve(stdout as Buffer)
+      })
+    })
 
   const runCmd = (cmd: string, args: string[]): Promise<void> =>
     new Promise((resolve, reject) => {
@@ -63,45 +85,72 @@ async function rawToBuffer(filePath: string, maxSize?: number): Promise<Buffer> 
       })
     })
 
-  const runCmdOut = (cmd: string, args: string[]): Promise<Buffer> =>
-    new Promise((resolve, reject) => {
-      execFile(cmd, args, { timeout: 45000, encoding: 'buffer', maxBuffer: 128 * 1024 * 1024 }, (err, stdout) => {
-        if (err) reject(err)
-        else resolve(stdout as Buffer)
-      })
-    })
-
   try {
+    // ── macOS PRIORITY: sips is best for ARW files (native support) ──
     if (process.platform === 'darwin') {
-      // Use absolute path — Electron's env PATH may not include /usr/bin.
-      // For thumbnails: sips resizes directly, saving ~187MB of memory per photo.
-      const sipsArgs = maxSize
-        ? ['-s', 'format', 'jpeg', '-s', 'formatOptions', '85', '-Z', String(maxSize), filePath, '--out', tmpFile]
-        : ['-s', 'format', 'tiff', filePath, '--out', tmpFile]
-      await runCmd('/usr/bin/sips', sipsArgs)
-      if (!existsSync(tmpFile)) throw new Error(`sips did not produce output for ${filePath}`)
-      return readFileSync(tmpFile)
-    } else {
-      // Try dcraw first: output TIFF to stdout.
-      // -c: write to stdout, -T: TIFF output, -w: camera white balance
-      const dcrawOut = await runCmdOut('dcraw', ['-c', '-T', '-w', '-q', '3', filePath]).catch(() => Buffer.alloc(0))
-      if (dcrawOut.length > 0) {
-        return dcrawOut
+      console.log(`[rawlight] Attempting sips decode for ${ext} file: ${filePath}`)
+      try {
+        await runCmd('/usr/bin/sips', ['-s', 'format', 'tiff', filePath, '--out', tmpFile])
+        if (existsSync(tmpFile)) {
+          const data = readFileSync(tmpFile)
+          if (data.length > 10000) {
+            console.log(`[rawlight] ✓ sips decoded RAW to TIFF (${data.length} bytes): ${filePath}`)
+            return data
+          }
+        }
+      } catch (err) {
+        console.log(`[rawlight] sips failed: ${String(err).slice(0, 100)}`)
       }
-
-      // Fallback: rawtherapee-cli writing TIFF on disk.
-      await runCmd('rawtherapee-cli', ['-o', tmpFile, '-t', '-c', filePath])
-      return readFileSync(tmpFile)
     }
+
+    // ── Fallback: dcraw (excellent demosaic, works on all platforms) ──
+    // For Sony ARW: -q 3 (AHD) for best quality
+    // -c (stdout) -T (TIFF) -w (camera WB) -q 3 (AHD demosaic) -H 2 (highlight recovery) -o 1 (auto WB)
+    console.log(`[rawlight] Attempting dcraw decode for ${ext} file: ${filePath}`)
+    const dcrawArgs = ['-c', '-T', '-w', '-q', '3', '-H', '2', '-o', '1', filePath]
+    try {
+      const dcrawOut = await runCmdOut(DCRAW_BIN, dcrawArgs)
+      if (dcrawOut.length > 10000) {
+        console.log(`[rawlight] ✓ dcraw decoded RAW to TIFF (${dcrawOut.length} bytes): ${filePath}`)
+        return dcrawOut
+      } else {
+        console.log(`[rawlight] dcraw output too small (${dcrawOut.length} bytes), skipping`)
+      }
+    } catch (err) {
+      console.log(`[rawlight] dcraw failed: ${String(err).slice(0, 100)}`)
+    }
+
+    // ── Linux/Windows: rawtherapee-cli ──
+    if (process.platform !== 'darwin') {
+      console.log(`[rawlight] Attempting rawtherapee-cli decode for ${ext} file: ${filePath}`)
+      try {
+        await runCmd('rawtherapee-cli', ['-o', tmpFile, '-t', '-c', filePath])
+        if (existsSync(tmpFile)) {
+          const data = readFileSync(tmpFile)
+          if (data.length > 10000) {
+            console.log(`[rawlight] ✓ rawtherapee-cli decoded RAW to TIFF (${data.length} bytes): ${filePath}`)
+            return data
+          }
+        }
+      } catch (err) {
+        console.log(`[rawlight] rawtherapee-cli failed: ${String(err).slice(0, 100)}`)
+      }
+    }
+
+    // ── Last resort: libopenraw or libraw (if available) ──
+    // This prevents falling back to tiny embedded JPEGs
+    throw new Error(
+      `No RAW decoder available for ${filePath} (${ext}). ` +
+      `Install: macOS needs Xcode tools, Linux needs dcraw or rawtherapee, ` +
+      `Windows needs dcraw`
+    )
   } finally {
     try { unlinkSync(tmpFile) } catch { /* ignore cleanup errors */ }
   }
 }
 
-/**
- * Returns a sharp-compatible input: Buffer for RAW files, path string for others.
- * maxSize: if set, the RAW is decoded at a lower resolution (for thumbnails).
- */
+
+
 async function getSharpInput(filePath: string, maxSize?: number): Promise<Buffer | string> {
   if (isRaw(filePath)) {
     return rawToBuffer(filePath, maxSize)
@@ -111,6 +160,8 @@ async function getSharpInput(filePath: string, maxSize?: number): Promise<Buffer
 
 /**
  * Generates a JPEG thumbnail (max 300px) for the grid view.
+ * For RAW files, decodes via native tools (sips/dcraw/rawtherapee) → TIFF → resized JPEG.
+ * No JPEG fallback — ensures quality.
  */
 export async function generateThumbnail(filePath: string): Promise<Buffer> {
   const renderThumb = (input: Buffer | string): Promise<Buffer> =>
@@ -120,18 +171,14 @@ export async function generateThumbnail(filePath: string): Promise<Buffer> {
       .jpeg({ quality: 75 })
       .toBuffer()
 
-  // Fast path for RAW thumbnails (small JPEG directly from decoder).
-  // Some ARW variants fail this path on macOS; fallback below keeps import usable.
   try {
-    const input = await getSharpInput(filePath, 600)
+    const input = await getSharpInput(filePath)
+    console.log(`[rawlight] Rendering thumbnail (300px max) for ${filePath}`)
     return await renderThumb(input)
-  } catch {
-    if (!isRaw(filePath)) throw new Error(`Thumbnail generation failed for ${filePath}`)
+  } catch (err) {
+    console.error(`[rawlight] Thumbnail generation failed for ${filePath}:`, err)
+    throw new Error(`Cannot generate thumbnail for ${filePath}: ${String(err).slice(0, 80)}`)
   }
-
-  // Fallback for RAW: decode full-quality raster (TIFF) then resize with sharp.
-  const fullInput = await getSharpInput(filePath)
-  return renderThumb(fullInput)
 }
 
 /**
@@ -176,7 +223,8 @@ function applyEditsToPipeline(
   const toneBrightness = 1 + (e.whites - e.blacks) / 200
   const brightnessFactor = exposureFactor * toneBrightness
   const saturationFactor = 1 + e.saturation / 100
-  const hueDegrees = e.tint * 0.5
+  const hueShift = Math.round(e.tint * 0.5)
+  const hueDegrees = ((hueShift % 360) + 360) % 360
 
   if (brightnessFactor !== 1 || saturationFactor !== 1 || hueDegrees !== 0) {
     pipeline = pipeline.modulate({

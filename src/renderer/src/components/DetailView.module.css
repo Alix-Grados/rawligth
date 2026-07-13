@@ -25,19 +25,21 @@
   cursor: grabbing;
 }
 
-.zoomControls {
+.floatingControls {
   position: absolute;
   top: 12px;
-  left: 12px;
-  z-index: 6;
+  right: 12px;
+  z-index: 8;
   display: inline-flex;
-  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
-  padding: 6px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  max-width: min(92%, 980px);
+  padding: 8px;
   border-radius: 10px;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  background: rgba(18, 18, 18, 0.74);
+  background: rgba(18, 18, 18, 0.72);
   backdrop-filter: blur(8px);
 }
 
@@ -72,35 +74,49 @@
   background: rgba(232, 160, 32, 0.2);
 }
 
+.clippingActive {
+  border-color: rgba(255, 60, 60, 0.85);
+  color: #ffb3b3;
+  background: rgba(255, 40, 40, 0.22);
+}
+
+.clippingCanvas {
+  position: absolute;
+  pointer-events: none;
+  border-radius: 4px;
+  mix-blend-mode: normal;
+  image-rendering: pixelated;
+}
+
 .zoomBtn,
 .zoomReset {
-  border: 1px solid rgba(255, 255, 255, 0.16);
-  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--border);
+  background: transparent;
   color: var(--text);
   border-radius: 7px;
   font-size: 13px;
   line-height: 1;
-  height: 28px;
-  min-width: 28px;
+  height: 26px;
+  min-width: 26px;
   padding: 0 8px;
   cursor: pointer;
 }
 
 .zoomBtn:hover,
 .zoomReset:hover {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.08);
 }
 
 .zoomBtn:disabled,
 .zoomReset:disabled {
-  opacity: 0.45;
+  opacity: 0.4;
   cursor: default;
 }
 
 .zoomValue {
   color: var(--text-muted);
   font-size: 11px;
-  min-width: 44px;
+  min-width: 40px;
   text-align: center;
 }
 

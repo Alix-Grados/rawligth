@@ -79,7 +79,9 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
   const [renderQuality, setRenderQuality] = useState<RenderQuality>('fast')
   const [pan, setPan] = useState({ x: 0, y: 0 })
   const [isPanning, setIsPanning] = useState(false)
+  const [showClipping, setShowClipping] = useState(false)
   const [requestedPreviewWidth, setRequestedPreviewWidth] = useState(1600)
+  const clippingCanvasRef = useRef<HTMLCanvasElement>(null)
   const containerRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const [imgBounds, setImgBounds] = useState<ImageBounds | null>(null)
@@ -243,6 +245,68 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
     }
   }, [])
 
+  // Clipping overlay: red = highlights blown (any channel ≥ 250), blue = shadows crushed (all channels ≤ 5)
+  useEffect(() => {
+    const canvas = clippingCanvasRef.current
+    const img = imgRef.current
+    if (!canvas || !img || !showClipping) {
+      if (canvas) {
+        const ctx = canvas.getContext('2d')
+        ctx?.clearRect(0, 0, canvas.width, canvas.height)
+      }
+      return
+    }
+
+    if (img.naturalWidth <= 0 || img.naturalHeight <= 0) return
+
+    let cancelled = false
+    const raf = requestAnimationFrame(() => {
+      if (cancelled) return
+      const w = img.naturalWidth
+      const h = img.naturalHeight
+
+      const src = document.createElement('canvas')
+      src.width = w
+      src.height = h
+      const sCtx = src.getContext('2d')
+      if (!sCtx) return
+      sCtx.drawImage(img, 0, 0, w, h)
+      const { data } = sCtx.getImageData(0, 0, w, h)
+
+      canvas.width = w
+      canvas.height = h
+      const dCtx = canvas.getContext('2d')
+      if (!dCtx) return
+      const out = dCtx.createImageData(w, h)
+
+      const CLIP_HI = 250
+      const CLIP_LO = 5
+
+      for (let i = 0; i < w * h; i++) {
+        const p = i * 4
+        const r = data[p]
+        const g = data[p + 1]
+        const b = data[p + 2]
+        const blown = r >= CLIP_HI || g >= CLIP_HI || b >= CLIP_HI
+        const crushed = r <= CLIP_LO && g <= CLIP_LO && b <= CLIP_LO
+        if (blown) {
+          out.data[p] = 255; out.data[p + 1] = 0; out.data[p + 2] = 0; out.data[p + 3] = 200
+        } else if (crushed) {
+          out.data[p] = 0; out.data[p + 1] = 80; out.data[p + 2] = 255; out.data[p + 3] = 200
+        } else {
+          out.data[p + 3] = 0
+        }
+      }
+
+      dCtx.putImageData(out, 0, 0)
+    })
+
+    return () => {
+      cancelled = true
+      cancelAnimationFrame(raf)
+    }
+  }, [showClipping, src, loading])
+
   const scheduleDraggingLassoPreview = useCallback((next: { id: number; points: Array<{ x: number; y: number }> }) => {
     pendingDragLassoRef.current = next
     if (dragRafRef.current !== null) return
@@ -281,34 +345,45 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
   }, [photo.id, updateRequestedPreviewWidth])
 
   const clampZoom = useCallback((value: number) => {
-    return Math.max(1, Math.min(8, value))
-  }, [])
+    // Allow zooming below 1 in fit/fill mode (further out than the default fit)
+    const min = (scaleMode === 'p100' || scaleMode === 'p200') ? 1 : 0.1
+    return Math.max(min, Math.min(8, value))
+  }, [scaleMode])
 
   const applyZoomStep = useCallback((direction: 1 | -1) => {
     setZoom((prev) => {
-      const step = prev < 2 ? 0.2 : 0.4
+      const step = prev <= 1 ? 0.1 : (prev < 2 ? 0.2 : 0.4)
       return clampZoom(prev + direction * step)
     })
   }, [clampZoom])
-
-  const handleZoomIn = useCallback(() => {
-    applyZoomStep(1)
-  }, [applyZoomStep])
-
-  const handleZoomOut = useCallback(() => {
-    applyZoomStep(-1)
-  }, [applyZoomStep])
-
-  const handleResetZoom = useCallback(() => {
-    setZoom(1)
-    setPan({ x: 0, y: 0 })
-  }, [])
 
   const handleSetScaleMode = useCallback((next: ScaleMode) => {
     setScaleMode(next)
     setZoom(1)
     setPan({ x: 0, y: 0 })
   }, [])
+
+  const handleZoomIn = useCallback(() => {
+    applyZoomStep(1)
+  }, [applyZoomStep])
+
+  const handleZoomOut = useCallback(() => {
+    // In p100/p200 mode at zoom=1, switch to fit instead of going below 1
+    if (zoom <= 1.001 && (scaleMode === 'p100' || scaleMode === 'p200')) {
+      handleSetScaleMode('fit')
+      return
+    }
+    applyZoomStep(-1)
+  }, [applyZoomStep, handleSetScaleMode, scaleMode, zoom])
+
+  const handleResetZoom = useCallback(() => {
+    if (scaleMode === 'p100' || scaleMode === 'p200') {
+      handleSetScaleMode('fit')
+      return
+    }
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }, [handleSetScaleMode, scaleMode])
 
   const effectiveZoom = zoom * getScaleModeMultiplier()
 
@@ -391,9 +466,9 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
     if (e.deltaY < 0) {
       applyZoomStep(1)
     } else if (e.deltaY > 0) {
-      applyZoomStep(-1)
+      handleZoomOut()
     }
-  }, [applyZoomStep])
+  }, [applyZoomStep, handleZoomOut])
 
   // Mouse events for drag/resize
   const handleSvgPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
@@ -584,7 +659,7 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
   }, [imgBounds, onUpdateLocalPoints])
 
   return (
-    <div className={styles.container}>
+    <div className={styles.container} onWheel={handleImageWrapWheel}>
       <div
         className={
           styles.imageWrap
@@ -592,13 +667,12 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
           + (isPanning ? ' ' + styles.panning : '')
         }
         ref={containerRef}
-        onWheel={handleImageWrapWheel}
         onPointerDown={handlePanPointerDown}
         onPointerMove={handlePanPointerMove}
         onPointerUp={handlePanPointerUp}
         onPointerCancel={handlePanPointerUp}
       >
-        <div className={styles.zoomControls}>
+        <div className={styles.floatingControls}>
           <div className={styles.controlGroup}>
             <button type="button" className={styles.modeBtn + (scaleMode === 'fit' ? ' ' + styles.modeBtnActive : '')} onClick={() => handleSetScaleMode('fit')}>Fit</button>
             <button type="button" className={styles.modeBtn + (scaleMode === 'fill' ? ' ' + styles.modeBtnActive : '')} onClick={() => handleSetScaleMode('fill')}>Fill</button>
@@ -609,11 +683,24 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
             <button type="button" className={styles.modeBtn + (renderQuality === 'fast' ? ' ' + styles.modeBtnActive : '')} onClick={() => setRenderQuality('fast')}>Rapide</button>
             <button type="button" className={styles.modeBtn + (renderQuality === 'full' ? ' ' + styles.modeBtnActive : '')} onClick={() => setRenderQuality('full')}>Pleine</button>
           </div>
-          <button type="button" className={styles.zoomBtn} onClick={handleZoomOut} disabled={zoom <= 1.001} aria-label="Zoom arrière">−</button>
-          <span className={styles.zoomValue}>{Math.round(effectiveZoom * 100)}%</span>
-          <button type="button" className={styles.zoomBtn} onClick={handleZoomIn} disabled={zoom >= 7.999} aria-label="Zoom avant">+</button>
-          <button type="button" className={styles.zoomReset} onClick={handleResetZoom} disabled={zoom <= 1.001}>100%</button>
+          <div className={styles.controlGroup}>
+            <button
+              type="button"
+              className={styles.modeBtn + (showClipping ? ' ' + styles.clippingActive : '')}
+              onClick={() => setShowClipping((v) => !v)}
+              title="Afficher les zones écrêtées (rouge = hautes lumières, bleu = ombres)"
+            >
+              Ecretage
+            </button>
+          </div>
+          <div className={styles.controlGroup}>
+            <button type="button" className={styles.zoomBtn} onClick={handleZoomOut} disabled={zoom <= 0.101 && scaleMode !== 'p100' && scaleMode !== 'p200' || effectiveZoom <= 1.001 && (scaleMode === 'p100' || scaleMode === 'p200')} aria-label="Zoom arrière">−</button>
+            <span className={styles.zoomValue}>{Math.round(effectiveZoom * 100)}%</span>
+            <button type="button" className={styles.zoomBtn} onClick={handleZoomIn} disabled={zoom >= 7.999} aria-label="Zoom avant">+</button>
+            <button type="button" className={styles.zoomReset} onClick={handleResetZoom} disabled={zoom === 1}>Reset</button>
+          </div>
         </div>
+
         {src ? (
           <img
             ref={imgRef}
@@ -630,6 +717,22 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
 
         {/* Subtle loading indicator — shown over existing image, not replacing it */}
         {loading && src && <div className={styles.loadingDot} />}
+
+        {/* Clipping overlay — positioned and transformed to exactly match the image */}
+        {showClipping && src && imgBounds && (
+          <canvas
+            ref={clippingCanvasRef}
+            className={styles.clippingCanvas}
+            style={{
+              left: imgBounds.x,
+              top: imgBounds.y,
+              width: imgBounds.w,
+              height: imgBounds.h,
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${effectiveZoom})`,
+              transformOrigin: 'center center',
+            }}
+          />
+        )}
 
         {colorMaskPreview && imgBounds && (
           <img
