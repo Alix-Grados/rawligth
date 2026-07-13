@@ -20,6 +20,7 @@ function App(): React.JSX.Element {
   const [colorPickLocalId, setColorPickLocalId] = useState<number | null>(null)
   const previewRevision = useRef(0)
   const [, setPreviewRev] = useState(0)
+  const [zoomLabel, setZoomLabel] = useState('Ajusté')
   const localPersistTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
 
   const bumpPreview = useCallback(() => {
@@ -165,6 +166,7 @@ function App(): React.JSX.Element {
                     onUpdateLocalPoints={handleUpdateLocalPoints}
                     onPickLocalColor={handlePickLocalColor}
                     onStopColorPick={() => setColorPickLocalId(null)}
+                    onZoomChange={setZoomLabel}
                   />
                   <EditPanel
                     photo={selectedPhoto}
@@ -199,6 +201,14 @@ function App(): React.JSX.Element {
                 )}
               </div>
             ))}
+          </div>
+        )}
+
+        {viewMode === 'detail' && selectedPhoto && (
+          <div className={styles.statusBar}>
+            <span>{selectedPhoto.filename}</span>
+            <span className={styles.statusSep}>·</span>
+            <span>{zoomLabel}</span>
           </div>
         )}
       </div>

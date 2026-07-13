@@ -65,7 +65,7 @@ function findDcraw(): string {
 }
 const DCRAW_BIN = findDcraw()
 
-async function rawToBuffer(filePath: string, maxSize?: number): Promise<Buffer> {
+async function rawToBuffer(filePath: string): Promise<Buffer> {
   const tmpFile = join(tmpdir(), `rawlight_${Date.now()}_${basename(filePath)}.tiff`)
   const ext = extname(filePath).toLowerCase()
 
@@ -86,7 +86,27 @@ async function rawToBuffer(filePath: string, maxSize?: number): Promise<Buffer> 
     })
 
   try {
-    // ── macOS PRIORITY: sips is best for ARW files (native support) ──
+    // ── Priority 1: dcraw — neutral AHD decode, 16-bit, no hidden processing ──
+    // dcraw is preferred over sips: sips applies Apple's automatic noise reduction and
+    // tone adjustments that soften the image. dcraw gives a neutral base for our own edits.
+    // Install: brew install dcraw
+    console.log(`[rawlight] Attempting dcraw decode for ${ext} file: ${filePath}`)
+    const dcrawArgs = ['-c', '-T', '-w', '-q', '3', '-H', '2', '-o', '1', '-6', filePath]
+    try {
+      const dcrawOut = await runCmdOut(DCRAW_BIN, dcrawArgs)
+      if (dcrawOut.length > 10000) {
+        console.log(`[rawlight] ✓ dcraw decoded RAW to 16-bit TIFF (${dcrawOut.length} bytes): ${filePath}`)
+        return dcrawOut
+      } else {
+        console.log(`[rawlight] dcraw output too small (${dcrawOut.length} bytes), skipping`)
+      }
+    } catch (err) {
+      console.log(`[rawlight] dcraw failed: ${String(err).slice(0, 100)}`)
+    }
+
+    // ── Fallback: sips (macOS only) ──
+    // sips uses Apple's Core Image RAW, which applies automatic noise reduction.
+    // Used only when dcraw is not installed.
     if (process.platform === 'darwin') {
       console.log(`[rawlight] Attempting sips decode for ${ext} file: ${filePath}`)
       try {
@@ -103,24 +123,7 @@ async function rawToBuffer(filePath: string, maxSize?: number): Promise<Buffer> 
       }
     }
 
-    // ── Fallback: dcraw (excellent demosaic, works on all platforms) ──
-    // For Sony ARW: -q 3 (AHD) for best quality
-    // -c (stdout) -T (TIFF) -w (camera WB) -q 3 (AHD demosaic) -H 2 (highlight recovery) -o 1 (auto WB)
-    console.log(`[rawlight] Attempting dcraw decode for ${ext} file: ${filePath}`)
-    const dcrawArgs = ['-c', '-T', '-w', '-q', '3', '-H', '2', '-o', '1', filePath]
-    try {
-      const dcrawOut = await runCmdOut(DCRAW_BIN, dcrawArgs)
-      if (dcrawOut.length > 10000) {
-        console.log(`[rawlight] ✓ dcraw decoded RAW to TIFF (${dcrawOut.length} bytes): ${filePath}`)
-        return dcrawOut
-      } else {
-        console.log(`[rawlight] dcraw output too small (${dcrawOut.length} bytes), skipping`)
-      }
-    } catch (err) {
-      console.log(`[rawlight] dcraw failed: ${String(err).slice(0, 100)}`)
-    }
-
-    // ── Linux/Windows: rawtherapee-cli ──
+    // ── Fallback: rawtherapee-cli (Linux/Windows) ──
     if (process.platform !== 'darwin') {
       console.log(`[rawlight] Attempting rawtherapee-cli decode for ${ext} file: ${filePath}`)
       try {
@@ -137,12 +140,9 @@ async function rawToBuffer(filePath: string, maxSize?: number): Promise<Buffer> 
       }
     }
 
-    // ── Last resort: libopenraw or libraw (if available) ──
-    // This prevents falling back to tiny embedded JPEGs
     throw new Error(
       `No RAW decoder available for ${filePath} (${ext}). ` +
-      `Install: macOS needs Xcode tools, Linux needs dcraw or rawtherapee, ` +
-      `Windows needs dcraw`
+      `Install dcraw for best quality: macOS: brew install dcraw, Linux: apt install dcraw`
     )
   } finally {
     try { unlinkSync(tmpFile) } catch { /* ignore cleanup errors */ }
@@ -151,9 +151,9 @@ async function rawToBuffer(filePath: string, maxSize?: number): Promise<Buffer> 
 
 
 
-async function getSharpInput(filePath: string, maxSize?: number): Promise<Buffer | string> {
+async function getSharpInput(filePath: string): Promise<Buffer | string> {
   if (isRaw(filePath)) {
-    return rawToBuffer(filePath, maxSize)
+    return rawToBuffer(filePath)
   }
   return filePath
 }
@@ -209,9 +209,9 @@ function applyEditsToPipeline(
     noise_reduction: toNum(edits.noise_reduction),
   }
 
-  // Force 8-bit sRGB immediately — TIFF from sips is rgb16 (ushort).
-  // Without this, the blending step gets 16-bit raw data and corrupts the output.
-  let pipeline = sharp(input, { failOn: 'none' }).rotate().toColorspace('srgb')
+  // Keep native bit depth (16-bit for TIFF from sips/dcraw) throughout the edit pipeline.
+  // toColorspace('srgb') would downgrade 16-bit to 8-bit — we defer that to the output step.
+  let pipeline = sharp(input, { failOn: 'none' }).rotate()
 
   if (options.width) {
     pipeline = pipeline.resize(options.width, undefined, { withoutEnlargement: true })
@@ -232,6 +232,17 @@ function applyEditsToPipeline(
       saturation: Math.max(0, saturationFactor),
       hue: hueDegrees,
     })
+  }
+
+  // Temperature: warm (+) boosts R and reduces B, cool (-) does the opposite.
+  // Uses a recomb matrix — works at any bit depth and before contrast/tone ops.
+  if (e.temperature !== 0) {
+    const f = Math.max(-0.25, Math.min(0.25, e.temperature / 100 * 0.25))
+    pipeline = pipeline.recomb([
+      [1 + f, 0, 0],
+      [0, 1, 0],
+      [0, 0, 1 - f],
+    ])
   }
 
   if (e.contrast !== 0) {
@@ -473,8 +484,10 @@ export async function applyEditsWithLocals(
     }
 
     const localBuffer = await applyEditsToPipeline(baseBuffer, localDelta, {}).png().toBuffer()
-    const baseRaw = await sharp(baseBuffer).removeAlpha().raw().toBuffer({ resolveWithObject: true })
-    const localRaw = await sharp(localBuffer).removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    // Convert to 8-bit sRGB before raw blending: without toColorspace('srgb'),
+    // raw() on a 16-bit buffer returns the underlying bytes verbatim (not scaled to 0-255).
+    const baseRaw = await sharp(baseBuffer).toColorspace('srgb').removeAlpha().raw().toBuffer({ resolveWithObject: true })
+    const localRaw = await sharp(localBuffer).toColorspace('srgb').removeAlpha().raw().toBuffer({ resolveWithObject: true })
     const w = baseRaw.info.width
     const h = baseRaw.info.height
     const mask = generateMask(w, h, adj, { data: baseRaw.data, channels: baseRaw.info.channels })
@@ -501,7 +514,7 @@ export async function applyEditsWithLocals(
     baseBuffer = await sharp(out, { raw: { width: w, height: h, channels } }).png().toBuffer()
   }
 
-  return sharp(baseBuffer).jpeg({ quality: options.quality ?? 90 }).toBuffer()
+  return sharp(baseBuffer).jpeg({ quality: options.quality ?? 95 }).toBuffer()
 }
 
 /**

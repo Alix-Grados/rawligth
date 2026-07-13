@@ -20,6 +20,7 @@ interface Props {
   onUpdateLocalPoints: (id: number, points_json: string, refreshPreview?: boolean) => void
   onPickLocalColor: (id: number, r: number, g: number, b: number) => void
   onStopColorPick: () => void
+  onZoomChange?: (label: string) => void
 }
 
 type DragState =
@@ -70,7 +71,7 @@ function pointToSegmentDistance(
   return Math.sqrt(dx * dx + dy * dy)
 }
 
-export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId, colorPickLocalId, onSelectLocal, onUpdateLocalPosition, onUpdateLocalPoints, onPickLocalColor, onStopColorPick }: Props): React.JSX.Element {
+export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId, colorPickLocalId, onSelectLocal, onUpdateLocalPosition, onUpdateLocalPoints, onPickLocalColor, onStopColorPick, onZoomChange }: Props): React.JSX.Element {
   // src always holds the LAST successfully loaded image — never set to null
   const [src, setSrc] = useState<string | null>(photo.thumbnail)
   const [loading, setLoading] = useState(false)
@@ -387,6 +388,15 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
 
   const effectiveZoom = zoom * getScaleModeMultiplier()
 
+  useEffect(() => {
+    let label: string
+    if (scaleMode === 'fit') label = zoom === 1 ? 'Ajusté' : `Ajusté ×${zoom.toFixed(1)}`
+    else if (scaleMode === 'fill') label = zoom === 1 ? 'Remplir' : `Remplir ×${zoom.toFixed(1)}`
+    else if (scaleMode === 'p100') label = `${Math.round(zoom * 100)}%`
+    else label = `${Math.round(zoom * 200)}%`
+    onZoomChange?.(label)
+  }, [zoom, scaleMode, onZoomChange])
+
   const clampPan = useCallback((x: number, y: number, zoomValue: number = effectiveZoom) => {
     const container = containerRef.current
     const img = imgRef.current
@@ -421,7 +431,8 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
     if (colorPickLocalId !== null) return
 
     const target = e.target as HTMLElement
-    if (target.closest(`.${styles.zoomControls}`)) return
+    if (target.closest(`.${styles.floatingControls}`)) return
+    if (target.closest('button')) return
 
     const tag = target.tagName.toLowerCase()
     if (tag === 'circle' || tag === 'ellipse' || tag === 'polygon' || tag === 'polyline' || tag === 'text') {

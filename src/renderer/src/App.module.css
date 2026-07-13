@@ -98,3 +98,21 @@
   color: var(--text-muted);
   font-weight: 600;
 }
+
+.statusBar {
+  height: 22px;
+  background: #0e0e0e;
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  gap: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.statusSep {
+  opacity: 0.35;
+}
