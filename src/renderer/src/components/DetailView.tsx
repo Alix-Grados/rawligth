@@ -15,11 +15,14 @@ interface Props {
   localAdjs: LocalAdjustment[]
   selectedLocalId: number | null
   colorPickLocalId: number | null
+  detouragePickMode: boolean
+  detourageMask: string | null
   onSelectLocal: (id: number) => void
   onUpdateLocalPosition: (id: number, cx: number, cy: number, rx: number, ry: number) => void
   onUpdateLocalPoints: (id: number, points_json: string, refreshPreview?: boolean) => void
   onPickLocalColor: (id: number, r: number, g: number, b: number) => void
   onStopColorPick: () => void
+  onDetouragePick: (nx: number, ny: number) => void
   onZoomChange?: (label: string) => void
 }
 
@@ -42,6 +45,17 @@ function parseLassoPoints(pointsJson: string | null): Array<{ x: number; y: numb
       .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.y))
   } catch {
     return []
+  }
+}
+
+function parseCloneOffset(pointsJson: string | null): { dx: number; dy: number } {
+  try {
+    const o = JSON.parse(pointsJson ?? '{}') as { dx?: unknown; dy?: unknown }
+    const dx = Number(o.dx ?? 0)
+    const dy = Number(o.dy ?? 0)
+    return { dx: Number.isFinite(dx) ? dx : 0, dy: Number.isFinite(dy) ? dy : 0 }
+  } catch {
+    return { dx: 0, dy: 0 }
   }
 }
 
@@ -71,7 +85,7 @@ function pointToSegmentDistance(
   return Math.sqrt(dx * dx + dy * dy)
 }
 
-export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId, colorPickLocalId, onSelectLocal, onUpdateLocalPosition, onUpdateLocalPoints, onPickLocalColor, onStopColorPick, onZoomChange }: Props): React.JSX.Element {
+export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId, colorPickLocalId, detouragePickMode, detourageMask, onSelectLocal, onUpdateLocalPosition, onUpdateLocalPoints, onPickLocalColor, onStopColorPick, onDetouragePick, onZoomChange }: Props): React.JSX.Element {
   // src always holds the LAST successfully loaded image — never set to null
   const [src, setSrc] = useState<string | null>(photo.thumbnail)
   const [loading, setLoading] = useState(false)
@@ -429,6 +443,7 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
     if (e.button !== 0) return
     if (effectiveZoom <= 1.001) return
     if (colorPickLocalId !== null) return
+    if (detouragePickMode) return
 
     const target = e.target as HTMLElement
     if (target.closest(`.${styles.floatingControls}`)) return
@@ -451,7 +466,7 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
     setIsPanning(true)
     e.currentTarget.setPointerCapture(e.pointerId)
     e.preventDefault()
-  }, [colorPickLocalId, drawingLasso, effectiveZoom, pan.x, pan.y])
+  }, [colorPickLocalId, detouragePickMode, drawingLasso, effectiveZoom, pan.x, pan.y])
 
   const handlePanPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
     const state = panRef.current
@@ -588,6 +603,13 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
   }, [imgBounds])
 
   const handleSvgClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
+    if (detouragePickMode) {
+      e.preventDefault()
+      const point = normalizedPointFromEvent(e)
+      if (point) onDetouragePick(point.x, point.y)
+      return
+    }
+
     if (colorPickLocalId !== null) {
       const selected = localAdjs.find((a) => a.id === colorPickLocalId)
       if (selected?.kind === 'color') {
@@ -621,7 +643,7 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
       if (!prev) return prev
       return { ...prev, points: [...prev.points, point] }
     })
-  }, [colorPickLocalId, drawingLasso, finalizeDrawing, imgBounds, localAdjs, normalizedPointFromEvent, onPickLocalColor, onStopColorPick, sampleColorFromEvent])
+  }, [colorPickLocalId, detouragePickMode, drawingLasso, finalizeDrawing, imgBounds, localAdjs, normalizedPointFromEvent, onDetouragePick, onPickLocalColor, onStopColorPick, sampleColorFromEvent])
 
   const handleSvgDoubleClick = useCallback((e: React.MouseEvent<SVGSVGElement>) => {
     if (!drawingLasso) return
@@ -755,16 +777,36 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
           />
         )}
 
-        {/* SVG overlay for radial filters */}
-        {imgBounds && localAdjs.length > 0 && (
+        {/* Détourage mask overlay */}
+        {detourageMask && imgBounds && (
+          <img
+            src={detourageMask}
+            alt="detourage-mask"
+            className={styles.detourageMask}
+            style={{ left: imgBounds.x, top: imgBounds.y, width: imgBounds.w, height: imgBounds.h }}
+            draggable={false}
+          />
+        )}
+
+        {/* SVG overlay for radial filters and detourage pick */}
+        {imgBounds && (localAdjs.length > 0 || detouragePickMode) && (
           <svg
-            className={styles.overlay + (colorPickLocalId !== null ? ' ' + styles.overlayPickMode + ' ' + styles.pipetteCursor : '')}
+            className={
+              styles.overlay +
+              (colorPickLocalId !== null ? ' ' + styles.overlayPickMode + ' ' + styles.pipetteCursor : '') +
+              (detouragePickMode ? ' ' + styles.overlayPickMode + ' ' + styles.detourageCursor : '')
+            }
             onPointerMove={handleSvgPointerMove}
             onPointerUp={handleSvgPointerUp}
             onPointerCancel={handleSvgPointerUp}
             onClick={handleSvgClick}
             onDoubleClick={handleSvgDoubleClick}
           >
+            <defs>
+              <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+                <polygon points="0 0, 8 3, 0 6" fill="#e8a020" />
+              </marker>
+            </defs>
             {[
               ...localAdjs.filter((adj) => adj.id !== selectedLocalId),
               ...localAdjs.filter((adj) => adj.id === selectedLocalId),
@@ -844,6 +886,62 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
 
               if (adj.kind === 'color') {
                 return null
+              }
+
+              if (adj.kind === 'detourage') {
+                return null
+              }
+
+              if (adj.kind === 'clone') {
+                const { dx, dy } = parseCloneOffset(adj.points_json)
+                const dstCx = imgBounds.x + adj.cx * imgBounds.w
+                const dstCy = imgBounds.y + adj.cy * imgBounds.h
+                const srcCx = imgBounds.x + (adj.cx - dx) * imgBounds.w
+                const srcCy = imgBounds.y + (adj.cy - dy) * imgBounds.h
+                const r = adj.rx * Math.min(imgBounds.w, imgBounds.h)
+                return (
+                  <g key={adj.id} onClick={(e) => { e.stopPropagation(); onSelectLocal(adj.id) }}>
+                    {/* Source circle */}
+                    <circle
+                      cx={srcCx} cy={srcCy} r={r}
+                      fill="none"
+                      stroke={isSelected ? '#60c0ff' : 'rgba(96,192,255,0.5)'}
+                      strokeWidth={isSelected ? 2 : 1}
+                      strokeDasharray="5 4"
+                    />
+                    <circle cx={srcCx} cy={srcCy} r={4} fill={isSelected ? '#60c0ff' : 'rgba(96,192,255,0.6)'} />
+                    {/* Arrow from source to destination */}
+                    {isSelected && (
+                      <line
+                        x1={srcCx} y1={srcCy} x2={dstCx} y2={dstCy}
+                        stroke="#e8a020"
+                        strokeWidth={1.5}
+                        strokeDasharray="4 3"
+                        markerEnd="url(#arrowhead)"
+                      />
+                    )}
+                    {/* Destination circle */}
+                    <circle
+                      cx={dstCx} cy={dstCy} r={r}
+                      fill="rgba(232,160,32,0.08)"
+                      stroke={isSelected ? '#e8a020' : 'rgba(255,255,255,0.5)'}
+                      strokeWidth={isSelected ? 2 : 1}
+                      style={{ cursor: 'move' }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation()
+                        onSelectLocal(adj.id)
+                        dragRef.current = { type: 'move', id: adj.id, startCx: adj.cx, startCy: adj.cy, startMx: e.clientX - e.currentTarget.closest('svg')!.getBoundingClientRect().left, startMy: e.clientY - e.currentTarget.closest('svg')!.getBoundingClientRect().top }
+                      }}
+                    />
+                    <circle cx={dstCx} cy={dstCy} r={4} fill={isSelected ? '#e8a020' : 'rgba(255,255,255,0.6)'} style={{ cursor: 'move' }}
+                      onMouseDown={(e) => {
+                        e.stopPropagation()
+                        onSelectLocal(adj.id)
+                        dragRef.current = { type: 'move', id: adj.id, startCx: adj.cx, startCy: adj.cy, startMx: e.clientX - e.currentTarget.closest('svg')!.getBoundingClientRect().left, startMy: e.clientY - e.currentTarget.closest('svg')!.getBoundingClientRect().top }
+                      }}
+                    />
+                  </g>
+                )
               }
 
               const cx = imgBounds.x + adj.cx * imgBounds.w
@@ -930,6 +1028,14 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
                 </g>
               )
             })()}
+
+            {detouragePickMode && (
+              <g>
+                <text x={imgBounds.x + 12} y={imgBounds.y + 20} fill="#dc2828" fontSize={12} fontWeight={600}>
+                  Détourage: cliquez sur le fond à supprimer
+                </text>
+              </g>
+            )}
           </svg>
         )}
       </div>

@@ -13,7 +13,7 @@ const api = {
     ipcRenderer.invoke('image:export', photoId, options),
   // Local adjustments
   getLocalAdjs: (photoId: number): Promise<unknown[]> => ipcRenderer.invoke('local:getByPhoto', photoId),
-  createLocalAdj: (photoId: number, kind: 'radial' | 'lasso' | 'color' = 'radial') =>
+  createLocalAdj: (photoId: number, kind: 'radial' | 'lasso' | 'color' | 'clone' | 'detourage' = 'radial') =>
     ipcRenderer.invoke('local:create', photoId, kind),
   updateLocalAdj: (data: unknown): Promise<boolean> => ipcRenderer.invoke('local:update', data),
   deleteLocalAdj: (id: number): Promise<boolean> => ipcRenderer.invoke('local:delete', id),
@@ -22,6 +22,11 @@ const api = {
     ipcRenderer.on('catalog:photoReady', handler)
     return () => ipcRenderer.removeListener('catalog:photoReady', handler)
   },
+  // Détourage
+  getDetourageMask: (photoId: number, seedNX: number, seedNY: number, tolerance: number): Promise<string | null> =>
+    ipcRenderer.invoke('image:detourageMask', photoId, seedNX, seedNY, tolerance),
+  exportDetourage: (photoId: number, seedNX: number, seedNY: number, tolerance: number, bgMode: 'transparent' | 'white'): Promise<{ success: boolean; path?: string; error?: string }> =>
+    ipcRenderer.invoke('image:exportDetourage', photoId, seedNX, seedNY, tolerance, bgMode),
 }
 
 if (process.contextIsolated) {

@@ -3,7 +3,7 @@ import { readdirSync, statSync, existsSync } from 'fs'
 import { join, basename, dirname } from 'path'
 import exifr from 'exifr'
 import { stmts } from './db'
-import { isSupported, generateThumbnail, applyEditsWithLocals, DEFAULT_EDITS, EditParams, LocalAdjustmentData } from './imageProcessor'
+import { isSupported, generateThumbnail, applyEditsWithLocals, previewDetourage, exportWithDetourage, DEFAULT_EDITS, EditParams, LocalAdjustmentData } from './imageProcessor'
 import { persistSidecarForPhoto, restoreSidecarForPhoto } from './sidecar'
 import type { SaveDialogOptions } from 'electron'
 
@@ -246,7 +246,7 @@ export function registerIpcHandlers(): void {
     return stmts.getLocalsByPhotoId.all(photoId)
   })
 
-  ipcMain.handle('local:create', (_, photoId: number, kind: 'radial' | 'lasso' | 'color' = 'radial') => {
+  ipcMain.handle('local:create', (_, photoId: number, kind: 'radial' | 'lasso' | 'color' | 'clone' | 'detourage' = 'radial') => {
     const defaultPoints = kind === 'lasso'
       ? JSON.stringify([
           { x: 0.35, y: 0.35 },
@@ -254,8 +254,11 @@ export function registerIpcHandlers(): void {
           { x: 0.65, y: 0.65 },
           { x: 0.35, y: 0.65 },
         ])
+      : kind === 'clone'
+      ? JSON.stringify({ dx: 0.15, dy: 0 })
       : null
-    const rows = stmts.insertLocal.all(photoId, kind, defaultPoints, 128, 128, 128, 28) as LocalAdjustmentData[]
+    const defaultColorTolerance = kind === 'detourage' ? 40 : 28
+    const rows = stmts.insertLocal.all(photoId, kind, defaultPoints, 128, 128, 128, defaultColorTolerance) as LocalAdjustmentData[]
     persistSidecarForPhoto(photoId)
     return rows[0]
   })
@@ -273,5 +276,78 @@ export function registerIpcHandlers(): void {
       persistSidecarForPhoto(Number(localRow.photo_id))
     }
     return true
+  })
+
+  // ---------- Détourage ----------
+  ipcMain.handle('image:detourageMask', async (_, photoId: number, seedNX: number, seedNY: number, tolerance: number) => {
+    const photo = stmts.getPhotoById.get(photoId) as Record<string, unknown> | undefined
+    if (!photo) return null
+    const editsRow = stmts.getEditsByPhotoId.get(photoId) as Record<string, unknown> | undefined
+    const edits: EditParams = editsRow
+      ? {
+          exposure: Number(editsRow.exposure),
+          contrast: Number(editsRow.contrast),
+          highlights: Number(editsRow.highlights),
+          shadows: Number(editsRow.shadows),
+          whites: Number(editsRow.whites),
+          blacks: Number(editsRow.blacks),
+          temperature: Number(editsRow.temperature),
+          tint: Number(editsRow.tint),
+          saturation: Number(editsRow.saturation),
+          vibrance: Number(editsRow.vibrance),
+          sharpness: Number(editsRow.sharpness),
+          noise_reduction: Number(editsRow.noise_reduction),
+          rotation: Number(editsRow.rotation),
+        }
+      : DEFAULT_EDITS
+    try {
+      const buffer = await previewDetourage(String(photo.file_path), edits, seedNX, seedNY, tolerance)
+      return `data:image/png;base64,${buffer.toString('base64')}`
+    } catch (err) {
+      console.error('[rawlight] detourageMask failed', err)
+      return null
+    }
+  })
+
+  ipcMain.handle('image:exportDetourage', async (_, photoId: number, seedNX: number, seedNY: number, tolerance: number, bgMode: 'transparent' | 'white') => {
+    const photo = stmts.getPhotoById.get(photoId) as Record<string, unknown> | undefined
+    if (!photo) return { success: false, error: 'Photo not found' }
+    const editsRow = stmts.getEditsByPhotoId.get(photoId) as Record<string, unknown> | undefined
+    const edits: EditParams = editsRow
+      ? {
+          exposure: Number(editsRow.exposure),
+          contrast: Number(editsRow.contrast),
+          highlights: Number(editsRow.highlights),
+          shadows: Number(editsRow.shadows),
+          whites: Number(editsRow.whites),
+          blacks: Number(editsRow.blacks),
+          temperature: Number(editsRow.temperature),
+          tint: Number(editsRow.tint),
+          saturation: Number(editsRow.saturation),
+          vibrance: Number(editsRow.vibrance),
+          sharpness: Number(editsRow.sharpness),
+          noise_reduction: Number(editsRow.noise_reduction),
+          rotation: Number(editsRow.rotation),
+        }
+      : DEFAULT_EDITS
+
+    const ext = String(photo.filename).split('.').pop() ?? ''
+    const baseName = basename(String(photo.filename), ext ? `.${ext}` : '')
+    const saveOptions = {
+      defaultPath: join(dirname(String(photo.file_path)), `${baseName}_detourage.png`),
+      filters: [{ name: 'PNG', extensions: ['png'] }],
+    }
+
+    const result = await dialog.showSaveDialog(saveOptions)
+    if (result.canceled || !result.filePath) return { success: false, error: 'Cancelled' }
+
+    try {
+      const { writeFileSync } = await import('fs')
+      const buffer = await exportWithDetourage(String(photo.file_path), edits, seedNX, seedNY, tolerance, bgMode)
+      writeFileSync(result.filePath, buffer)
+      return { success: true, path: result.filePath }
+    } catch (err) {
+      return { success: false, error: String(err) }
+    }
   })
 }

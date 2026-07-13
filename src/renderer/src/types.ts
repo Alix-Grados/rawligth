@@ -52,7 +52,7 @@ export const DEFAULT_EDITS: EditParams = {
 export interface LocalAdjustment {
   id: number
   photo_id: number
-  kind: 'radial' | 'lasso' | 'color'
+  kind: 'radial' | 'lasso' | 'color' | 'clone' | 'detourage'
   points_json: string | null
   target_r: number
   target_g: number

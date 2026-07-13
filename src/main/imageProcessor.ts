@@ -219,10 +219,6 @@ function applyEditsToPipeline(
   // causes the second to override the first's useExifOrientation flag (they do not compose).
   let pipeline = sharp(input, { failOn: 'none' })
 
-  if (e.rotation !== 0) {
-    pipeline = pipeline.rotate(e.rotation, { background: { r: 0, g: 0, b: 0 } })
-  }
-
   if (options.width) {
     pipeline = pipeline.resize(options.width, undefined, { withoutEnlargement: true })
   }
@@ -298,16 +294,20 @@ export async function applyEdits(
   options: { width?: number; quality?: number } = {}
 ): Promise<Buffer> {
   const rawInput = await getSharpInput(filePath)
-  const input = isRaw(filePath)
+  let input = isRaw(filePath)
     ? (rawInput as Buffer)
     : await sharp(rawInput as string, { failOn: 'none' }).rotate().png().toBuffer()
-  return applyEditsToPipeline(input, edits, options).png().toBuffer()
+  if (edits.rotation !== 0) {
+    input = await applyRotationWithCrop(input, edits.rotation)
+  }
+  const editsNoRotation = edits.rotation !== 0 ? { ...edits, rotation: 0 } : edits
+  return applyEditsToPipeline(input, editsNoRotation, options).png().toBuffer()
 }
 
 export interface LocalAdjustmentData {
   id: number
   photo_id: number
-  kind: 'radial' | 'lasso' | 'color'
+  kind: 'radial' | 'lasso' | 'color' | 'clone' | 'detourage'
   points_json: string | null
   target_r: number
   target_g: number
@@ -460,6 +460,143 @@ function generateMask(
 }
 
 /**
+ * Rotates a PNG buffer by `angle` degrees and crops the result to the largest
+ * axis-aligned rectangle that fits entirely within the rotated image (no black corners).
+ *
+ * For angle θ and original dimensions W×H the inscribed rectangle is:
+ *   width  = (W·cos θ − H·sin θ) / cos(2θ)
+ *   height = (H·cos θ − W·sin θ) / cos(2θ)
+ *
+ * When the formula yields non-positive dimensions (very large angles or nearly-square
+ * images at high angles) the crop is skipped and black corners remain.
+ */
+async function applyRotationWithCrop(input: Buffer, angle: number): Promise<Buffer> {
+  const meta = await sharp(input).metadata()
+  const origW = meta.width ?? 1
+  const origH = meta.height ?? 1
+  const θ = Math.abs(angle * Math.PI / 180)
+  const cosθ = Math.cos(θ)
+  const sinθ = Math.sin(θ)
+  const cos2θ = Math.cos(2 * θ)
+
+  // Bounding-box dimensions after rotation
+  const newW = origW * cosθ + origH * sinθ
+  const newH = origH * cosθ + origW * sinθ
+
+  let pipeline = sharp(input).rotate(angle, { background: { r: 0, g: 0, b: 0 } })
+
+  if (cos2θ > 0.01) {
+    const iw = Math.floor((origW * cosθ - origH * sinθ) / cos2θ)
+    const ih = Math.floor((origH * cosθ - origW * sinθ) / cos2θ)
+    if (iw > 0 && ih > 0) {
+      const left = Math.max(0, Math.round((newW - iw) / 2))
+      const top = Math.max(0, Math.round((newH - ih) / 2))
+      pipeline = pipeline.extract({ left, top, width: iw, height: ih })
+    }
+  }
+
+  return pipeline.png().toBuffer()
+}
+
+async function applyCloneStamp(imageBuffer: Buffer, adj: LocalAdjustmentData): Promise<Buffer> {
+  const meta = await sharp(imageBuffer).metadata()
+  const W = meta.width ?? 0
+  const H = meta.height ?? 0
+  if (W === 0 || H === 0) return imageBuffer
+
+  let dx = 0
+  let dy = 0
+  try {
+    const parsed = JSON.parse(adj.points_json ?? '{}') as { dx?: unknown; dy?: unknown }
+    dx = Number(parsed.dx ?? 0)
+    dy = Number(parsed.dy ?? 0)
+  } catch { /**/ }
+
+  if (!Number.isFinite(dx)) dx = 0
+  if (!Number.isFinite(dy)) dy = 0
+  if (dx === 0 && dy === 0) return imageBuffer
+
+  const radius = Math.max(1, Math.round(adj.rx * Math.min(W, H)))
+  const feather = Math.max(0.001, Math.min(1, adj.feather))
+
+  const srcCx = Math.round((adj.cx - dx) * W)
+  const srcCy = Math.round((adj.cy - dy) * H)
+  const dstCx = Math.round(adj.cx * W)
+  const dstCy = Math.round(adj.cy * H)
+
+  // Extract bounding box around source circle, clamped to image bounds
+  const exL = Math.max(0, srcCx - radius)
+  const exT = Math.max(0, srcCy - radius)
+  const exR = Math.min(W, srcCx + radius)
+  const exB = Math.min(H, srcCy + radius)
+  const exW = exR - exL
+  const exH = exB - exT
+  if (exW <= 0 || exH <= 0) return imageBuffer
+
+  const { data: srcData, info } = await sharp(imageBuffer)
+    .extract({ left: exL, top: exT, width: exW, height: exH })
+    .toColorspace('srgb')
+    .raw()
+    .toBuffer({ resolveWithObject: true })
+
+  const ch = info.channels
+  const innerEdge = 1 - feather
+  const rgba = Buffer.alloc(exW * exH * 4)
+
+  for (let y = 0; y < exH; y++) {
+    for (let x = 0; x < exW; x++) {
+      const absX = exL + x
+      const absY = exT + y
+      const relX = (absX - srcCx) / radius
+      const relY = (absY - srcCy) / radius
+      const dist = Math.sqrt(relX * relX + relY * relY)
+
+      let alpha: number
+      if (dist <= innerEdge) alpha = 255
+      else if (dist >= 1) alpha = 0
+      else {
+        const t = (dist - innerEdge) / feather
+        alpha = Math.round(255 * 0.5 * (1 + Math.cos(t * Math.PI)))
+      }
+
+      const si = (y * exW + x) * ch
+      const di = (y * exW + x) * 4
+      rgba[di] = srcData[si]
+      rgba[di + 1] = srcData[si + 1]
+      rgba[di + 2] = srcData[si + 2]
+      rgba[di + 3] = alpha
+    }
+  }
+
+  const patchPng = await sharp(rgba, { raw: { width: exW, height: exH, channels: 4 } }).png().toBuffer()
+
+  const offX = dstCx - srcCx
+  const offY = dstCy - srcCy
+  let pasteL = exL + offX
+  let pasteT = exT + offY
+  let finalPatch = patchPng
+
+  // Trim patch if paste position would start at negative coordinates
+  if (pasteL < 0 || pasteT < 0) {
+    const cropL = Math.max(0, -pasteL)
+    const cropT = Math.max(0, -pasteT)
+    const cropW = Math.max(1, exW - cropL)
+    const cropH = Math.max(1, exH - cropT)
+    if (cropW <= 0 || cropH <= 0) return imageBuffer
+    finalPatch = await sharp(patchPng)
+      .extract({ left: cropL, top: cropT, width: cropW, height: cropH })
+      .toBuffer()
+    pasteL = Math.max(0, pasteL)
+    pasteT = Math.max(0, pasteT)
+  }
+
+  return sharp(imageBuffer)
+    .composite([{ input: finalPatch, left: pasteL, top: pasteT }])
+    .png()
+    .toBuffer()
+}
+
+/**
  * Applies global edits then blends local (radial) adjustments on top.
  * The RAW file is decoded ONCE and all edit pipelines share the same decoded buffer.
  * Returns a final JPEG buffer.
@@ -477,17 +614,42 @@ export async function applyEditsWithLocals(
   // reads the Orientation EXIF tag and corrects the image before the edit pipeline.
   // We must NOT do this inside applyEditsToPipeline because chaining two .rotate()
   // calls in sharp does not compose — the second overrides the first.
-  const decoded = isRaw(filePath)
+  let decoded = isRaw(filePath)
     ? (rawInput as Buffer)
     : await sharp(rawInput as string, { failOn: 'none' }).rotate().png().toBuffer()
+  if (globalEdits.rotation !== 0) {
+    decoded = await applyRotationWithCrop(decoded, globalEdits.rotation)
+  }
+  const globalEditsNoRotation = globalEdits.rotation !== 0 ? { ...globalEdits, rotation: 0 } : globalEdits
   const toNum = (v: unknown): number => {
     const n = Number(v)
     return Number.isFinite(n) ? n : 0
   }
 
-  let baseBuffer = await applyEditsToPipeline(decoded, globalEdits, options).png().toBuffer()
+  let baseBuffer = await applyEditsToPipeline(decoded, globalEditsNoRotation, options).png().toBuffer()
 
   for (const adj of localAdjs) {
+    if (adj.kind === 'clone') {
+      baseBuffer = Buffer.from(await applyCloneStamp(baseBuffer, adj))
+      continue
+    }
+
+    if (adj.kind === 'detourage') {
+      if (!adj.points_json) continue
+      let seed: { nx: number; ny: number }
+      try { seed = JSON.parse(adj.points_json) as { nx: number; ny: number } } catch { continue }
+      if (typeof seed.nx !== 'number' || typeof seed.ny !== 'number') continue
+      const tolerance = Math.max(1, Math.round(Number(adj.color_tolerance) || 40))
+      const { data, info } = await sharp(baseBuffer).toColorspace('srgb').removeAlpha().raw().toBuffer({ resolveWithObject: true })
+      const { width: W, height: H, channels: CH } = info
+      const seedX = Math.max(0, Math.min(W - 1, Math.round(seed.nx * (W - 1))))
+      const seedY = Math.max(0, Math.min(H - 1, Math.round(seed.ny * (H - 1))))
+      const fillMask = floodFillMask(data, W, H, CH, seedX, seedY, tolerance)
+      const inpainted = inpaintMask(data, W, H, CH, fillMask)
+      baseBuffer = await sharp(inpainted, { raw: { width: W, height: H, channels: CH } }).png().toBuffer()
+      continue
+    }
+
     // Apply only local delta on top of the already-rendered global image.
     // This is more stable for RAW workflows than recomputing (global+local) from source.
     const localDelta: EditParams = {
@@ -550,4 +712,215 @@ export async function applyEditsJpeg(
 ): Promise<Buffer> {
   const png = await applyEdits(filePath, edits, options)
   return sharp(png).jpeg({ quality: options.quality ?? 90 }).toBuffer()
+}
+
+// ────────────────────────────────────────────────────────────────
+// Détourage — flood-fill background removal
+// ────────────────────────────────────────────────────────────────
+
+function floodFillMask(
+  data: Buffer,
+  width: number,
+  height: number,
+  channels: number,
+  seedX: number,
+  seedY: number,
+  tolerance: number
+): Uint8Array {
+  const mask = new Uint8Array(width * height)
+  const visited = new Uint8Array(width * height)
+  const seedBase = (seedY * width + seedX) * channels
+  const sr = data[seedBase]
+  const sg = data[seedBase + 1]
+  const sb = data[seedBase + 2]
+  const tolSq = tolerance * tolerance * 3
+
+  // Pre-allocated queue — worst case visits every pixel once
+  const queue = new Int32Array(width * height)
+  let head = 0
+  let tail = 0
+  const startIdx = seedY * width + seedX
+  queue[tail++] = startIdx
+  visited[startIdx] = 1
+  mask[startIdx] = 255
+
+  while (head < tail) {
+    const pi = queue[head++]
+    const x = pi % width
+    const y = (pi / width) | 0
+
+    const check = (ni: number): void => {
+      if (visited[ni]) return
+      visited[ni] = 1
+      const base = ni * channels
+      const dr = data[base] - sr
+      const dg = data[base + 1] - sg
+      const db = data[base + 2] - sb
+      if (dr * dr + dg * dg + db * db <= tolSq) {
+        mask[ni] = 255
+        queue[tail++] = ni
+      }
+    }
+
+    if (x > 0) check(pi - 1)
+    if (x < width - 1) check(pi + 1)
+    if (y > 0) check(pi - width)
+    if (y < height - 1) check(pi + width)
+  }
+
+  return mask
+}
+
+/**
+ * BFS diffusion inpainting: fills masked pixels by spreading border pixel values inward.
+ */
+function inpaintMask(
+  data: Buffer,
+  width: number,
+  height: number,
+  channels: number,
+  mask: Uint8Array
+): Buffer {
+  const result = Buffer.from(data)
+  const filled = new Uint8Array(width * height)
+  const inQueue = new Uint8Array(width * height)
+
+  for (let i = 0; i < width * height; i++) {
+    if (!mask[i]) filled[i] = 1
+  }
+
+  const queue = new Int32Array(width * height)
+  let head = 0
+  let tail = 0
+
+  for (let i = 0; i < width * height; i++) {
+    if (!mask[i]) continue
+    const x = i % width
+    const y = (i / width) | 0
+    if (
+      (x > 0 && filled[i - 1]) ||
+      (x < width - 1 && filled[i + 1]) ||
+      (y > 0 && filled[i - width]) ||
+      (y < height - 1 && filled[i + width])
+    ) {
+      queue[tail++] = i
+      inQueue[i] = 1
+    }
+  }
+
+  while (head < tail) {
+    const idx = queue[head++]
+    if (filled[idx]) continue
+
+    const x = idx % width
+    const y = (idx / width) | 0
+    let r = 0, g = 0, b = 0, count = 0
+
+    if (x > 0 && filled[idx - 1]) { const b0 = (idx - 1) * channels; r += result[b0]; g += result[b0 + 1]; b += result[b0 + 2]; count++ }
+    if (x < width - 1 && filled[idx + 1]) { const b0 = (idx + 1) * channels; r += result[b0]; g += result[b0 + 1]; b += result[b0 + 2]; count++ }
+    if (y > 0 && filled[idx - width]) { const b0 = (idx - width) * channels; r += result[b0]; g += result[b0 + 1]; b += result[b0 + 2]; count++ }
+    if (y < height - 1 && filled[idx + width]) { const b0 = (idx + width) * channels; r += result[b0]; g += result[b0 + 1]; b += result[b0 + 2]; count++ }
+
+    if (count > 0) {
+      const base = idx * channels
+      result[base] = (r / count + 0.5) | 0
+      result[base + 1] = (g / count + 0.5) | 0
+      result[base + 2] = (b / count + 0.5) | 0
+    }
+    filled[idx] = 1
+
+    if (x > 0 && mask[idx - 1] && !inQueue[idx - 1]) { queue[tail++] = idx - 1; inQueue[idx - 1] = 1 }
+    if (x < width - 1 && mask[idx + 1] && !inQueue[idx + 1]) { queue[tail++] = idx + 1; inQueue[idx + 1] = 1 }
+    if (y > 0 && mask[idx - width] && !inQueue[idx - width]) { queue[tail++] = idx - width; inQueue[idx - width] = 1 }
+    if (y < height - 1 && mask[idx + width] && !inQueue[idx + width]) { queue[tail++] = idx + width; inQueue[idx + width] = 1 }
+  }
+
+  return result
+}
+
+/**
+ * Returns an RGBA overlay PNG highlighting the flood-filled background region.
+ * Designed for real-time preview — runs at reduced resolution for speed.
+ */
+export async function previewDetourage(
+  filePath: string,
+  edits: EditParams,
+  seedNX: number,
+  seedNY: number,
+  tolerance: number,
+  previewWidth: number = 800
+): Promise<Buffer> {
+  const editedBuf = await applyEdits(filePath, edits, { width: previewWidth })
+  const { data, info } = await sharp(editedBuf).raw().toBuffer({ resolveWithObject: true })
+  const { width: W, height: H, channels: CH } = info
+
+  const seedX = Math.max(0, Math.min(W - 1, Math.round(seedNX * (W - 1))))
+  const seedY = Math.max(0, Math.min(H - 1, Math.round(seedNY * (H - 1))))
+  const mask = floodFillMask(data, W, H, CH, seedX, seedY, tolerance)
+
+  // Red semi-transparent overlay for selected background
+  const rgba = Buffer.alloc(W * H * 4, 0)
+  for (let i = 0; i < W * H; i++) {
+    if (mask[i]) {
+      rgba[i * 4] = 220
+      rgba[i * 4 + 1] = 40
+      rgba[i * 4 + 2] = 40
+      rgba[i * 4 + 3] = 150
+    }
+  }
+
+  return sharp(rgba, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer()
+}
+
+/**
+ * Exports the image with the flood-filled background replaced by transparency or white.
+ */
+export async function exportWithDetourage(
+  filePath: string,
+  edits: EditParams,
+  seedNX: number,
+  seedNY: number,
+  tolerance: number,
+  bgMode: 'transparent' | 'white'
+): Promise<Buffer> {
+  const imageBuffer = await applyEdits(filePath, edits)
+  const { width: W, height: H } = await sharp(imageBuffer).metadata()
+  if (!W || !H) throw new Error('Could not determine image dimensions')
+
+  // Run flood fill at a capped resolution for performance, then scale up
+  const maskGenWidth = Math.min(W, 2000)
+  const maskBuf = await applyEdits(filePath, edits, { width: maskGenWidth })
+  const { data: maskRaw, info: maskInfo } = await sharp(maskBuf).raw().toBuffer({ resolveWithObject: true })
+  const mseedX = Math.max(0, Math.min(maskInfo.width - 1, Math.round(seedNX * (maskInfo.width - 1))))
+  const mseedY = Math.max(0, Math.min(maskInfo.height - 1, Math.round(seedNY * (maskInfo.height - 1))))
+  const maskPixels = floodFillMask(maskRaw, maskInfo.width, maskInfo.height, maskInfo.channels, mseedX, mseedY, tolerance)
+
+  const maskGray = await sharp(Buffer.from(maskPixels), {
+    raw: { width: maskInfo.width, height: maskInfo.height, channels: 1 }
+  })
+    .resize(W, H, { fit: 'fill', kernel: 'nearest' })
+    .raw()
+    .toBuffer()
+
+  const { data: imgData } = await sharp(imageBuffer)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true })
+
+  const outData = Buffer.from(imgData)
+
+  for (let i = 0; i < W * H; i++) {
+    if (maskGray[i] > 127) {
+      if (bgMode === 'transparent') {
+        outData[i * 4 + 3] = 0
+      } else {
+        outData[i * 4] = 255
+        outData[i * 4 + 1] = 255
+        outData[i * 4 + 2] = 255
+        outData[i * 4 + 3] = 255
+      }
+    }
+  }
+
+  return sharp(outData, { raw: { width: W, height: H, channels: 4 } }).png().toBuffer()
 }

@@ -171,6 +171,41 @@
   color: var(--text);
 }
 
+.collapseBottom {
+  height: 14px;
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  border-top: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 9px;
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
+  width: 100%;
+}
+
+.collapseBottom:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.filmstripWrap {
+  max-height: 120px;
+  overflow: hidden;
+  transition: max-height 0.2s ease;
+  flex-shrink: 0;
+}
+
+.filmstripWrapCollapsed {
+  max-height: 0;
+  overflow: hidden;
+  transition: max-height 0.2s ease;
+  flex-shrink: 0;
+}
+
 .statusBar {
   height: 22px;
   background: #0e0e0e;

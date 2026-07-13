@@ -8,10 +8,16 @@ interface Props {
   localAdjs: LocalAdjustment[]
   selectedLocalId: number | null
   colorPickLocalId: number | null
+  detouragePickMode: boolean
+  detourageShowMask: boolean
   onEditsChanged: () => void
   onLocalsChanged: (adjs: LocalAdjustment[]) => void
   onSelectLocal: (id: number | null) => void
   onStartColorPick: (id: number | null) => void
+  onStartDetouragePick: () => void
+  onStopDetouragePick: () => void
+  onToggleDetourageMask: () => void
+  onExportDetourage: (bgMode: 'transparent' | 'white') => Promise<{ success: boolean; path?: string; error?: string }>
 }
 
 interface SliderProps {
@@ -65,11 +71,13 @@ function Slider({ label, value, min, max, displayValue, onChange }: SliderProps)
   )
 }
 
-export function EditPanel({ photo, localAdjs, selectedLocalId, colorPickLocalId, onEditsChanged, onLocalsChanged, onSelectLocal, onStartColorPick }: Props): React.JSX.Element {
+export function EditPanel({ photo, localAdjs, selectedLocalId, colorPickLocalId, detouragePickMode, detourageShowMask, onEditsChanged, onLocalsChanged, onSelectLocal, onStartColorPick, onStartDetouragePick, onStopDetouragePick, onToggleDetourageMask, onExportDetourage }: Props): React.JSX.Element {
   const [edits, setEdits] = useState<EditParams>(DEFAULT_EDITS)
   const [activeTab, setActiveTab] = useState<'global' | 'local'>('global')
   const [exporting, setExporting] = useState(false)
   const [exportMsg, setExportMsg] = useState<string | null>(null)
+  const [detourageExporting, setDetourageExporting] = useState(false)
+  const [detourageExportMsg, setDetourageExportMsg] = useState<string | null>(null)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const localSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastPhotoId = useRef<number | null>(null)
@@ -117,6 +125,19 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, colorPickLocalId,
     setTimeout(() => setExportMsg(null), 4000)
   }
 
+  const handleDetourageExport = async (bgMode: 'transparent' | 'white'): Promise<void> => {
+    setDetourageExporting(true)
+    setDetourageExportMsg(null)
+    const result = await onExportDetourage(bgMode)
+    setDetourageExporting(false)
+    if (result.success) {
+      setDetourageExportMsg(`✓ Exporté : ${result.path?.split('/').pop()}`)
+    } else {
+      setDetourageExportMsg(result.error === 'Cancelled' ? null : `Erreur : ${result.error}`)
+    }
+    setTimeout(() => setDetourageExportMsg(null), 5000)
+  }
+
   // ---------- Local adjustments ----------
   const handleAddRadial = async (): Promise<void> => {
     const adj = await window.api.createLocalAdj(photo.id, 'radial') as LocalAdjustment
@@ -132,6 +153,18 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, colorPickLocalId,
 
   const handleAddColor = async (): Promise<void> => {
     const adj = await window.api.createLocalAdj(photo.id, 'color') as LocalAdjustment
+    onLocalsChanged([...localAdjs, adj])
+    onSelectLocal(adj.id)
+  }
+
+  const handleAddClone = async (): Promise<void> => {
+    const adj = await window.api.createLocalAdj(photo.id, 'clone') as LocalAdjustment
+    onLocalsChanged([...localAdjs, adj])
+    onSelectLocal(adj.id)
+  }
+
+  const handleAddDetourage = async (): Promise<void> => {
+    const adj = await window.api.createLocalAdj(photo.id, 'detourage') as LocalAdjustment
     onLocalsChanged([...localAdjs, adj])
     onSelectLocal(adj.id)
   }
@@ -175,6 +208,24 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, colorPickLocalId,
     },
     [localAdjs, onLocalsChanged, onEditsChanged]
   )
+
+  const updateCloneOffset = useCallback((id: number, field: 'dx' | 'dy', value: number) => {
+    const updated = localAdjs.map(a => {
+      if (a.id !== id) return a
+      let current = { dx: 0, dy: 0 }
+      try { current = JSON.parse(a.points_json ?? '{}') as { dx: number; dy: number } } catch { /**/ }
+      return { ...a, points_json: JSON.stringify({ ...current, [field]: value }) }
+    })
+    onLocalsChanged(updated)
+    if (localSaveTimer.current) clearTimeout(localSaveTimer.current)
+    localSaveTimer.current = setTimeout(async () => {
+      const adj = updated.find(a => a.id === id)
+      if (adj) {
+        await window.api.updateLocalAdj(adj)
+        onEditsChanged()
+      }
+    }, 400)
+  }, [localAdjs, onLocalsChanged, onEditsChanged])
 
   const updateLocalColor = useCallback((id: number, hex: string) => {
     const m = /^#?([0-9a-fA-F]{6})$/.exec(hex)
@@ -286,6 +337,8 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, colorPickLocalId,
                 <button className={styles.addLocalBtn} onClick={handleAddRadial} title="Ajouter un filtre radial">+R</button>
                 <button className={styles.addLocalBtn} onClick={handleAddLasso} title="Ajouter un filtre lasso">+L</button>
                 <button className={styles.addLocalBtn} onClick={handleAddColor} title="Ajouter un filtre couleur">+C</button>
+                <button className={styles.addLocalBtn} onClick={handleAddClone} title="Ajouter un tampon clonage">+T</button>
+                <button className={styles.addLocalBtn} onClick={handleAddDetourage} title="Ajouter un détourage">+D</button>
               </div>
             </div>
             {localAdjs.map((adj, i) => (
@@ -297,11 +350,17 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, colorPickLocalId,
                 <span className={styles.localIcon}>
                   {adj.kind === 'lasso'
                     ? '⬠'
-                    : (adj.kind === 'color'
-                        ? (colorPickLocalId === adj.id ? '🧪' : '◉')
-                        : '◎')}
+                    : adj.kind === 'color'
+                    ? (colorPickLocalId === adj.id ? '🧪' : '◉')
+                    : adj.kind === 'clone'
+                    ? '⊕'
+                    : adj.kind === 'detourage'
+                    ? '✦'
+                    : '◎'}
                 </span>
-                <span className={styles.localName}>Filtre {adj.kind === 'lasso' ? 'lasso' : (adj.kind === 'color' ? 'couleur' : 'radial')} {i + 1}</span>
+                <span className={styles.localName}>
+                  {adj.kind === 'lasso' ? 'Filtre lasso' : adj.kind === 'color' ? 'Filtre couleur' : adj.kind === 'clone' ? 'Tampon' : adj.kind === 'detourage' ? 'Détourage' : 'Filtre radial'} {i + 1}
+                </span>
                 <button
                   className={styles.localDelete}
                   onClick={(e) => { e.stopPropagation(); handleDeleteLocal(adj.id) }}
@@ -313,7 +372,100 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, colorPickLocalId,
 
           {selectedAdj && (
             <div className={styles.localSliders}>
-              {selectedAdj.kind !== 'color' && (
+              {selectedAdj.kind === 'detourage' && (
+                <>
+                  <div className={styles.group}>
+                    <div className={styles.groupTitle}>Sélection du fond</div>
+                    {!selectedAdj.points_json && !detouragePickMode && (
+                      <p className={styles.detourageInfo}>
+                        Cliquez sur le fond pour sélectionner la zone à reconstruire.
+                      </p>
+                    )}
+                    {detouragePickMode ? (
+                      <button
+                        className={styles.detouragePickBtn + ' ' + styles.detouragePickBtnActive}
+                        onClick={onStopDetouragePick}
+                      >
+                        ◎ En attente de clic… (Annuler)
+                      </button>
+                    ) : (
+                      <button className={styles.detouragePickBtn} onClick={onStartDetouragePick}>
+                        {selectedAdj.points_json ? '↺ Nouvelle sélection' : '⊕ Activer la sélection'}
+                      </button>
+                    )}
+                  </div>
+
+                  {selectedAdj.points_json && (
+                    <div className={styles.group}>
+                      <div className={styles.groupTitle}>Réglage</div>
+                      <Slider
+                        label="Tolérance"
+                        value={selectedAdj.color_tolerance}
+                        min={1}
+                        max={150}
+                        onChange={(v) => updateLocalEdit(selectedAdj.id, 'color_tolerance', v)}
+                      />
+                      <button className={styles.detouragePickBtn} onClick={onToggleDetourageMask}>
+                        {detourageShowMask ? '✦ Voir le résultat' : '◉ Voir la sélection'}
+                      </button>
+                    </div>
+                  )}
+
+                  {selectedAdj.points_json && (
+                    <div className={styles.exportSection}>
+                      <div className={styles.groupTitle}>Exporter (détourage)</div>
+                      <div className={styles.exportBtns}>
+                        <button
+                          className={styles.exportBtn}
+                          onClick={() => handleDetourageExport('transparent')}
+                          disabled={detourageExporting}
+                        >
+                          PNG transparent
+                        </button>
+                        <button
+                          className={styles.exportBtn}
+                          onClick={() => handleDetourageExport('white')}
+                          disabled={detourageExporting}
+                        >
+                          Fond blanc
+                        </button>
+                      </div>
+                      {detourageExportMsg && <div className={styles.exportMsg}>{detourageExportMsg}</div>}
+                    </div>
+                  )}
+                </>
+              )}
+
+              {selectedAdj.kind === 'clone' && (() => {
+                let dx = 0, dy = 0
+                try { const o = JSON.parse(selectedAdj.points_json ?? '{}') as { dx?: number; dy?: number }; dx = Number(o.dx ?? 0); dy = Number(o.dy ?? 0) } catch { /**/ }
+                return (
+                  <div className={styles.group}>
+                    <div className={styles.groupTitle}>Source (décalage)</div>
+                    <Slider
+                      label="Décalage X"
+                      value={Math.round(dx * 100)}
+                      displayValue={Math.round(dx * 100)}
+                      min={-50}
+                      max={50}
+                      onChange={(v) => updateCloneOffset(selectedAdj.id, 'dx', v / 100)}
+                    />
+                    <Slider
+                      label="Décalage Y"
+                      value={Math.round(dy * 100)}
+                      displayValue={Math.round(dy * 100)}
+                      min={-50}
+                      max={50}
+                      onChange={(v) => updateCloneOffset(selectedAdj.id, 'dy', v / 100)}
+                    />
+                    <div className={styles.groupTitle} style={{ marginTop: 8 }}>Pinceau</div>
+                    <Slider label="Rayon" value={Math.round(selectedAdj.rx * 100)} min={1} max={50} onChange={(v) => { const updated = localAdjs.map(a => a.id === selectedAdj.id ? { ...a, rx: v / 100, ry: v / 100 } : a); onLocalsChanged(updated); if (localSaveTimer.current) clearTimeout(localSaveTimer.current); localSaveTimer.current = setTimeout(async () => { const a = updated.find(x => x.id === selectedAdj.id); if (a) { await window.api.updateLocalAdj(a); onEditsChanged() } }, 400) }} />
+                    <Slider label="Adoucissement" value={Math.round(selectedAdj.feather * 100)} min={0} max={100} onChange={(v) => updateLocalShape(selectedAdj.id, 'feather', v / 100)} />
+                  </div>
+                )
+              })()}
+
+              {selectedAdj.kind !== 'color' && selectedAdj.kind !== 'clone' && selectedAdj.kind !== 'detourage' && (
                 <div className={styles.group}>
                   <div className={styles.groupTitle}>Forme</div>
                   <Slider label="Adoucissement" value={Math.round(selectedAdj.feather * 100)} min={0} max={100} onChange={(v) => updateLocalShape(selectedAdj.id, 'feather', v / 100)} />
@@ -368,25 +520,27 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, colorPickLocalId,
                   </div>
                 </div>
               )}
-              <div className={styles.group}>
-                <div className={styles.groupTitle}>Lumière locale</div>
-                <Slider
-                  label="Exposition"
-                  value={Math.round(selectedAdj.exposure * 10)}
-                  displayValue={Math.round(selectedAdj.exposure * 10) / 10}
-                  min={-50}
-                  max={50}
-                  onChange={(v) => updateLocalEdit(selectedAdj.id, 'exposure', v / 10)}
-                />
-                <Slider label="Contraste" value={selectedAdj.contrast} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'contrast', v)} />
-                <Slider label="Hautes lumières" value={selectedAdj.highlights} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'highlights', v)} />
-                <Slider label="Ombres" value={selectedAdj.shadows} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'shadows', v)} />
-              </div>
-              <div className={styles.group}>
-                <div className={styles.groupTitle}>Couleur locale</div>
-                <Slider label="Saturation" value={selectedAdj.saturation} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'saturation', v)} />
-                <Slider label="Température" value={selectedAdj.temperature} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'temperature', v)} />
-              </div>
+              {selectedAdj.kind !== 'clone' && selectedAdj.kind !== 'detourage' && (<>
+                <div className={styles.group}>
+                  <div className={styles.groupTitle}>Lumière locale</div>
+                  <Slider
+                    label="Exposition"
+                    value={Math.round(selectedAdj.exposure * 10)}
+                    displayValue={Math.round(selectedAdj.exposure * 10) / 10}
+                    min={-50}
+                    max={50}
+                    onChange={(v) => updateLocalEdit(selectedAdj.id, 'exposure', v / 10)}
+                  />
+                  <Slider label="Contraste" value={selectedAdj.contrast} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'contrast', v)} />
+                  <Slider label="Hautes lumières" value={selectedAdj.highlights} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'highlights', v)} />
+                  <Slider label="Ombres" value={selectedAdj.shadows} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'shadows', v)} />
+                </div>
+                <div className={styles.group}>
+                  <div className={styles.groupTitle}>Couleur locale</div>
+                  <Slider label="Saturation" value={selectedAdj.saturation} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'saturation', v)} />
+                  <Slider label="Température" value={selectedAdj.temperature} min={-100} max={100} onChange={(v) => updateLocalEdit(selectedAdj.id, 'temperature', v)} />
+                </div>
+              </>)}
             </div>
           )}
         </>

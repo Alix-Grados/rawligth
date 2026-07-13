@@ -18,11 +18,15 @@ function App(): React.JSX.Element {
   const [localAdjs, setLocalAdjs] = useState<LocalAdjustment[]>([])
   const [selectedLocalId, setSelectedLocalId] = useState<number | null>(null)
   const [colorPickLocalId, setColorPickLocalId] = useState<number | null>(null)
+  const [detouragePickMode, setDetouragePickMode] = useState(false)
+  const [detourageMask, setDetourageMask] = useState<string | null>(null)
+  const [detourageShowMask, setDetourageShowMask] = useState(true)
   const previewRevision = useRef(0)
   const [, setPreviewRev] = useState(0)
   const [zoomLabel, setZoomLabel] = useState('Ajusté')
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
   const [editCollapsed, setEditCollapsed] = useState(false)
+  const [filmstripCollapsed, setFilmstripCollapsed] = useState(false)
   const localPersistTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
 
   const bumpPreview = useCallback(() => {
@@ -62,6 +66,8 @@ function App(): React.JSX.Element {
     setSelectedPhoto(photo)
     setSelectedLocalId(null)
     setColorPickLocalId(null)
+    setDetouragePickMode(false)
+    setDetourageMask(null)
     setViewMode('detail')
     const adjs = await window.api.getLocalAdjs(photo.id) as LocalAdjustment[]
     setLocalAdjs(adjs)
@@ -105,6 +111,62 @@ function App(): React.JSX.Element {
       return next
     })
   }, [scheduleLocalPersist])
+
+  // Fetch red mask overlay for the currently selected détourage local adj
+  const selectedDetourageAdj = localAdjs.find(a => a.id === selectedLocalId && a.kind === 'detourage') ?? null
+  const detourageAdjKey = selectedDetourageAdj
+    ? `${selectedDetourageAdj.points_json ?? ''}:${selectedDetourageAdj.color_tolerance}`
+    : null
+
+  useEffect(() => {
+    if (!selectedPhoto || !selectedDetourageAdj || !selectedDetourageAdj.points_json) {
+      setDetourageMask(null)
+      return
+    }
+    let seed: { nx: number; ny: number }
+    try { seed = JSON.parse(selectedDetourageAdj.points_json) as { nx: number; ny: number } } catch {
+      setDetourageMask(null)
+      return
+    }
+    setDetourageShowMask(true)
+    let cancelled = false
+    const timer = setTimeout(async () => {
+      const mask = await window.api.getDetourageMask(
+        selectedPhoto.id,
+        seed.nx,
+        seed.ny,
+        selectedDetourageAdj.color_tolerance
+      )
+      if (!cancelled) setDetourageMask(mask)
+    }, 150)
+    return () => { cancelled = true; clearTimeout(timer) }
+  }, [selectedPhoto?.id, detourageAdjKey])
+
+  const handleDetouragePick = useCallback((nx: number, ny: number) => {
+    setDetouragePickMode(false)
+    if (selectedLocalId === null) return
+    setLocalAdjs((prev) => {
+      let nextAdj: LocalAdjustment | null = null
+      const next = prev.map((a) => {
+        if (a.id !== selectedLocalId || a.kind !== 'detourage') return a
+        nextAdj = { ...a, points_json: JSON.stringify({ nx, ny }) }
+        return nextAdj
+      })
+      if (nextAdj) scheduleLocalPersist(nextAdj, true)
+      return next
+    })
+  }, [selectedLocalId, scheduleLocalPersist])
+
+  const handleExportDetourage = useCallback(async (bgMode: 'transparent' | 'white') => {
+    if (!selectedPhoto) return { success: false, error: 'Aucune photo' }
+    const adj = localAdjs.find(a => a.id === selectedLocalId && a.kind === 'detourage')
+    if (!adj || !adj.points_json) return { success: false, error: 'Aucune sélection' }
+    let seed: { nx: number; ny: number }
+    try { seed = JSON.parse(adj.points_json) as { nx: number; ny: number } } catch {
+      return { success: false, error: 'Seed invalide' }
+    }
+    return window.api.exportDetourage(selectedPhoto.id, seed.nx, seed.ny, adj.color_tolerance, bgMode)
+  }, [selectedPhoto, localAdjs, selectedLocalId])
 
   const handlePickLocalColor = useCallback((id: number, r: number, g: number, b: number) => {
     setLocalAdjs((prev) => {
@@ -184,11 +246,14 @@ function App(): React.JSX.Element {
                     localAdjs={localAdjs}
                     selectedLocalId={selectedLocalId}
                     colorPickLocalId={colorPickLocalId}
+                    detouragePickMode={detouragePickMode}
+                    detourageMask={detourageShowMask ? detourageMask : null}
                     onSelectLocal={setSelectedLocalId}
                     onUpdateLocalPosition={handleUpdateLocalPosition}
                     onUpdateLocalPoints={handleUpdateLocalPoints}
                     onPickLocalColor={handlePickLocalColor}
                     onStopColorPick={() => setColorPickLocalId(null)}
+                    onDetouragePick={handleDetouragePick}
                     onZoomChange={setZoomLabel}
                   />
                   <button
@@ -204,10 +269,16 @@ function App(): React.JSX.Element {
                       localAdjs={localAdjs}
                       selectedLocalId={selectedLocalId}
                       colorPickLocalId={colorPickLocalId}
+                      detouragePickMode={detouragePickMode}
+                      detourageShowMask={detourageShowMask}
                       onEditsChanged={handleEditsChanged}
                       onLocalsChanged={setLocalAdjs}
                       onSelectLocal={setSelectedLocalId}
                       onStartColorPick={setColorPickLocalId}
+                      onStartDetouragePick={() => setDetouragePickMode(true)}
+                      onStopDetouragePick={() => setDetouragePickMode(false)}
+                      onToggleDetourageMask={() => setDetourageShowMask(v => !v)}
+                      onExportDetourage={handleExportDetourage}
                     />
                   </div>
                 </>
@@ -219,29 +290,39 @@ function App(): React.JSX.Element {
         </div>
 
         {viewMode === 'detail' && photos.length > 0 && (
-          <div className={styles.filmstrip}>
-            {photos.map((p) => (
-              <div
-                key={p.id}
-                className={styles.strip + (p.id === selectedPhoto?.id ? ' ' + styles.stripActive : '')}
-                onClick={() => handleSelectPhoto(p)}
-              >
-                {p.thumbnail ? (
-                  <img src={p.thumbnail} alt={p.filename} draggable={false} />
-                ) : (
-                  <div className={styles.stripEmpty}>RAW</div>
-                )}
+          <>
+            <button
+              className={styles.collapseBottom}
+              onClick={() => setFilmstripCollapsed(v => !v)}
+              title={filmstripCollapsed ? 'Afficher la pellicule' : 'Masquer la pellicule'}
+            >
+              {filmstripCollapsed ? '▴' : '▾'}
+            </button>
+            <div className={filmstripCollapsed ? styles.filmstripWrapCollapsed : styles.filmstripWrap}>
+              <div className={styles.filmstrip}>
+                {photos.map((p) => (
+                  <div
+                    key={p.id}
+                    className={styles.strip + (p.id === selectedPhoto?.id ? ' ' + styles.stripActive : '')}
+                    onClick={() => handleSelectPhoto(p)}
+                  >
+                    {p.thumbnail ? (
+                      <img src={p.thumbnail} alt={p.filename} draggable={false} />
+                    ) : (
+                      <div className={styles.stripEmpty}>RAW</div>
+                    )}
+                  </div>
+                ))}
               </div>
-            ))}
-          </div>
-        )}
-
-        {viewMode === 'detail' && selectedPhoto && (
-          <div className={styles.statusBar}>
-            <span>{selectedPhoto.filename}</span>
-            <span className={styles.statusSep}>·</span>
-            <span>{zoomLabel}</span>
-          </div>
+              {selectedPhoto && (
+                <div className={styles.statusBar}>
+                  <span>{selectedPhoto.filename}</span>
+                  <span className={styles.statusSep}>·</span>
+                  <span>{zoomLabel}</span>
+                </div>
+              )}
+            </div>
+          </>
         )}
       </div>
     </div>

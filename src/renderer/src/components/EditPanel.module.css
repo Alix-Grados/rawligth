@@ -278,3 +278,39 @@
   background: rgba(232, 160, 32, 0.15);
   color: var(--accent);
 }
+
+.detourageInfo {
+  font-size: 11px;
+  color: var(--text-muted);
+  line-height: 1.5;
+  margin-bottom: 10px;
+}
+
+.detouragePickBtn {
+  width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+  background: var(--bg-panel2);
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 600;
+  transition: border-color 0.15s, background 0.15s, color 0.15s;
+}
+
+.detouragePickBtn:hover {
+  border-color: #dc2828;
+  color: #dc2828;
+}
+
+.detouragePickBtnActive {
+  border-color: #dc2828;
+  background: rgba(220, 40, 40, 0.12);
+  color: #dc2828;
+  animation: detouragePulse 1.2s ease-in-out infinite;
+}
+
+@keyframes detouragePulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.65; }
+}
