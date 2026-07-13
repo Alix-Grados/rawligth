@@ -17,6 +17,11 @@ const api = {
     ipcRenderer.invoke('local:create', photoId, kind),
   updateLocalAdj: (data: unknown): Promise<boolean> => ipcRenderer.invoke('local:update', data),
   deleteLocalAdj: (id: number): Promise<boolean> => ipcRenderer.invoke('local:delete', id),
+  onPhotoReady: (callback: (photo: unknown) => void): (() => void) => {
+    const handler = (_: Electron.IpcRendererEvent, photo: unknown): void => callback(photo)
+    ipcRenderer.on('catalog:photoReady', handler)
+    return () => ipcRenderer.removeListener('catalog:photoReady', handler)
+  },
 }
 
 if (process.contextIsolated) {

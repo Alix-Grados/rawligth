@@ -17,6 +17,7 @@ function mapEdits(row: Record<string, unknown> | undefined): EditParams {
     vibrance: Number(row.vibrance),
     sharpness: Number(row.sharpness),
     noise_reduction: Number(row.noise_reduction),
+    rotation: Number(row.rotation),
   }
 }
 
@@ -115,6 +116,7 @@ export function restoreSidecarForPhoto(photoId: number, filePath: string): void 
     vibrance: num(g.vibrance, 0),
     sharpness: num(g.sharpness, 0),
     noise_reduction: num(g.noise_reduction, 0),
+    rotation: num(g.rotation, 0),
   })
 
   stmts.deleteLocalsByPhotoId.run(photoId)

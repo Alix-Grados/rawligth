@@ -11,6 +11,7 @@ export interface EditParams {
   vibrance: number
   sharpness: number
   noise_reduction: number
+  rotation: number
 }
 
 export interface Photo {
@@ -45,6 +46,7 @@ export const DEFAULT_EDITS: EditParams = {
   vibrance: 0,
   sharpness: 0,
   noise_reduction: 0,
+  rotation: 0,
 }
 
 export interface LocalAdjustment {

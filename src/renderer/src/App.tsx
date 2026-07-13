@@ -13,7 +13,7 @@ function App(): React.JSX.Element {
   const [currentFolder, setCurrentFolder] = useState<string | null>(null)
   const [photos, setPhotos] = useState<Photo[]>([])
   const [selectedPhoto, setSelectedPhoto] = useState<Photo | null>(null)
-  const [viewMode, setViewMode] = useState<ViewMode>('grid')
+  const [viewMode, setViewMode] = useState<ViewMode>('detail')
   const [loading, setLoading] = useState(false)
   const [localAdjs, setLocalAdjs] = useState<LocalAdjustment[]>([])
   const [selectedLocalId, setSelectedLocalId] = useState<number | null>(null)
@@ -21,6 +21,8 @@ function App(): React.JSX.Element {
   const previewRevision = useRef(0)
   const [, setPreviewRev] = useState(0)
   const [zoomLabel, setZoomLabel] = useState('Ajusté')
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const [editCollapsed, setEditCollapsed] = useState(false)
   const localPersistTimers = useRef<Record<number, ReturnType<typeof setTimeout>>>({})
 
   const bumpPreview = useCallback(() => {
@@ -31,7 +33,18 @@ function App(): React.JSX.Element {
   const loadFolder = useCallback(async (folder: string) => {
     setLoading(true)
     setCurrentFolder(folder)
+    setPhotos([])
+
+    const accumulated: Photo[] = []
+    const cleanup = window.api.onPhotoReady((photo) => {
+      accumulated.push(photo as Photo)
+      setPhotos([...accumulated])
+    })
+
     await window.api.importFolder(folder)
+    cleanup()
+
+    // Final authoritative fetch — correct sort order (date_taken desc)
     const loaded = await window.api.getPhotosByFolder(folder) as Photo[]
     setPhotos(loaded)
     setSelectedPhoto((prev) => {
@@ -41,6 +54,7 @@ function App(): React.JSX.Element {
       }
       return loaded[0] ?? null
     })
+    setViewMode('detail')
     setLoading(false)
   }, [])
 
@@ -126,11 +140,20 @@ function App(): React.JSX.Element {
 
   return (
     <div className={styles.app}>
-      <Sidebar
-        currentFolder={currentFolder}
-        photos={photos}
-        onSelectFolder={loadFolder}
-      />
+      <div className={sidebarCollapsed ? styles.sidebarWrapCollapsed : styles.sidebarWrap}>
+        <Sidebar
+          currentFolder={currentFolder}
+          photos={photos}
+          onSelectFolder={loadFolder}
+        />
+      </div>
+      <button
+        className={styles.collapseLeft}
+        onClick={() => setSidebarCollapsed(v => !v)}
+        title={sidebarCollapsed ? 'Afficher la barre latérale' : 'Masquer la barre latérale'}
+      >
+        {sidebarCollapsed ? '›' : '‹'}
+      </button>
 
       <div className={styles.main}>
         <Toolbar
@@ -141,7 +164,7 @@ function App(): React.JSX.Element {
         />
 
         <div className={styles.content}>
-          {loading && (
+          {loading && photos.length === 0 && (
             <div className={styles.loadingOverlay}>Importation en cours...</div>
           )}
 
@@ -168,16 +191,25 @@ function App(): React.JSX.Element {
                     onStopColorPick={() => setColorPickLocalId(null)}
                     onZoomChange={setZoomLabel}
                   />
-                  <EditPanel
-                    photo={selectedPhoto}
-                    localAdjs={localAdjs}
-                    selectedLocalId={selectedLocalId}
-                    colorPickLocalId={colorPickLocalId}
-                    onEditsChanged={handleEditsChanged}
-                    onLocalsChanged={setLocalAdjs}
-                    onSelectLocal={setSelectedLocalId}
-                    onStartColorPick={setColorPickLocalId}
-                  />
+                  <button
+                    className={styles.collapseRight}
+                    onClick={() => setEditCollapsed(v => !v)}
+                    title={editCollapsed ? 'Afficher les réglages' : 'Masquer les réglages'}
+                  >
+                    {editCollapsed ? '‹' : '›'}
+                  </button>
+                  <div className={editCollapsed ? styles.editWrapCollapsed : styles.editWrap}>
+                    <EditPanel
+                      photo={selectedPhoto}
+                      localAdjs={localAdjs}
+                      selectedLocalId={selectedLocalId}
+                      colorPickLocalId={colorPickLocalId}
+                      onEditsChanged={handleEditsChanged}
+                      onLocalsChanged={setLocalAdjs}
+                      onSelectLocal={setSelectedLocalId}
+                      onStartColorPick={setColorPickLocalId}
+                    />
+                  </div>
                 </>
               ) : (
                 <div className={styles.noSelection}>Selectionnez une photo dans la grille</div>

@@ -36,12 +36,14 @@ export interface EditParams {
   vibrance: number       // -100 to +100
   sharpness: number      // 0 to 100
   noise_reduction: number // 0 to 100
+  rotation: number       // -45 to +45 degrees
 }
 
 export const DEFAULT_EDITS: EditParams = {
   exposure: 0, contrast: 0, highlights: 0, shadows: 0,
   whites: 0, blacks: 0, temperature: 0, tint: 0,
   saturation: 0, vibrance: 0, sharpness: 0, noise_reduction: 0,
+  rotation: 0,
 }
 
 /**
@@ -207,11 +209,19 @@ function applyEditsToPipeline(
     vibrance: toNum(edits.vibrance),
     sharpness: toNum(edits.sharpness),
     noise_reduction: toNum(edits.noise_reduction),
+    rotation: toNum(edits.rotation),
   }
 
   // Keep native bit depth (16-bit for TIFF from sips/dcraw) throughout the edit pipeline.
   // toColorspace('srgb') would downgrade 16-bit to 8-bit — we defer that to the output step.
-  let pipeline = sharp(input, { failOn: 'none' }).rotate()
+  // Note: EXIF auto-rotation (.rotate() with no args) is NOT done here — it is applied by the
+  // caller as a separate pre-processing step, because chaining two .rotate() calls in sharp
+  // causes the second to override the first's useExifOrientation flag (they do not compose).
+  let pipeline = sharp(input, { failOn: 'none' })
+
+  if (e.rotation !== 0) {
+    pipeline = pipeline.rotate(e.rotation, { background: { r: 0, g: 0, b: 0 } })
+  }
 
   if (options.width) {
     pipeline = pipeline.resize(options.width, undefined, { withoutEnlargement: true })
@@ -287,7 +297,10 @@ export async function applyEdits(
   edits: EditParams,
   options: { width?: number; quality?: number } = {}
 ): Promise<Buffer> {
-  const input = await getSharpInput(filePath)
+  const rawInput = await getSharpInput(filePath)
+  const input = isRaw(filePath)
+    ? (rawInput as Buffer)
+    : await sharp(rawInput as string, { failOn: 'none' }).rotate().png().toBuffer()
   return applyEditsToPipeline(input, edits, options).png().toBuffer()
 }
 
@@ -457,7 +470,16 @@ export async function applyEditsWithLocals(
   localAdjs: LocalAdjustmentData[],
   options: { width?: number; quality?: number } = {}
 ): Promise<Buffer> {
-  const decoded = await getSharpInput(filePath)
+  const rawInput = await getSharpInput(filePath)
+  // Apply EXIF auto-orientation as a separate pre-processing step.
+  // For RAW files the decoder (dcraw/sips) already outputs correctly-oriented pixels,
+  // so .rotate() on the buffer is a no-op. For standard formats (JPEG, PNG, TIFF) it
+  // reads the Orientation EXIF tag and corrects the image before the edit pipeline.
+  // We must NOT do this inside applyEditsToPipeline because chaining two .rotate()
+  // calls in sharp does not compose — the second overrides the first.
+  const decoded = isRaw(filePath)
+    ? (rawInput as Buffer)
+    : await sharp(rawInput as string, { failOn: 'none' }).rotate().png().toBuffer()
   const toNum = (v: unknown): number => {
     const n = Number(v)
     return Number.isFinite(n) ? n : 0
@@ -481,6 +503,7 @@ export async function applyEditsWithLocals(
       vibrance: toNum(adj.vibrance),
       sharpness: toNum(adj.sharpness),
       noise_reduction: toNum(adj.noise_reduction),
+      rotation: 0,
     }
 
     const localBuffer = await applyEditsToPipeline(baseBuffer, localDelta, {}).png().toBuffer()

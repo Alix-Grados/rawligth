@@ -80,6 +80,11 @@ db.exec(`
 `)
 
 // Lightweight migrations for existing catalogs.
+const editCols = (db.prepare(`PRAGMA table_info(edits)`).all() as Array<{ name: string }>).map((c) => c.name)
+if (!editCols.includes('rotation')) {
+  db.exec(`ALTER TABLE edits ADD COLUMN rotation REAL NOT NULL DEFAULT 0`)
+}
+
 const localCols = (db.prepare(`PRAGMA table_info(local_adjustments)`).all() as Array<{ name: string }>).map((c) => c.name)
 if (!localCols.includes('kind')) {
   db.exec(`ALTER TABLE local_adjustments ADD COLUMN kind TEXT NOT NULL DEFAULT 'radial'`)
@@ -111,14 +116,14 @@ export const stmts = {
   updatePhotoThumbnail: db.prepare(`UPDATE photos SET thumbnail = ? WHERE id = ?`),
   getEditsByPhotoId: db.prepare(`SELECT * FROM edits WHERE photo_id = ?`),
   upsertEdits: db.prepare(`
-    INSERT INTO edits (photo_id, exposure, contrast, highlights, shadows, whites, blacks, temperature, tint, saturation, vibrance, sharpness, noise_reduction, updated_at)
-    VALUES (@photo_id, @exposure, @contrast, @highlights, @shadows, @whites, @blacks, @temperature, @tint, @saturation, @vibrance, @sharpness, @noise_reduction, datetime('now'))
+    INSERT INTO edits (photo_id, exposure, contrast, highlights, shadows, whites, blacks, temperature, tint, saturation, vibrance, sharpness, noise_reduction, rotation, updated_at)
+    VALUES (@photo_id, @exposure, @contrast, @highlights, @shadows, @whites, @blacks, @temperature, @tint, @saturation, @vibrance, @sharpness, @noise_reduction, @rotation, datetime('now'))
     ON CONFLICT(photo_id) DO UPDATE SET
       exposure = @exposure, contrast = @contrast, highlights = @highlights,
       shadows = @shadows, whites = @whites, blacks = @blacks,
       temperature = @temperature, tint = @tint, saturation = @saturation,
       vibrance = @vibrance, sharpness = @sharpness, noise_reduction = @noise_reduction,
-      updated_at = datetime('now')
+      rotation = @rotation, updated_at = datetime('now')
   `),
   deletePhoto: db.prepare(`DELETE FROM photos WHERE id = ?`),
   getLocalsByPhotoId: db.prepare(`SELECT * FROM local_adjustments WHERE photo_id = ? ORDER BY id`),

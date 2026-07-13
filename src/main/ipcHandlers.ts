@@ -16,7 +16,7 @@ export function registerIpcHandlers(): void {
     return result.canceled ? null : result.filePaths[0]
   })
 
-  ipcMain.handle('catalog:importFolder', async (_, folderPath: string) => {
+  ipcMain.handle('catalog:importFolder', async (event, folderPath: string) => {
     if (!existsSync(folderPath)) return []
 
     let entries: string[]
@@ -40,22 +40,29 @@ export function registerIpcHandlers(): void {
       }
       if (!stat.isFile()) continue
 
-      // Generate thumbnail
+      // Check existing record to skip redundant work
+      const cached = stmts.getPhotoByPath.get(filePath) as Record<string, unknown> | undefined
+
+      // Generate thumbnail only if not already stored
       let thumbnail: Buffer | null = null
-      try {
-        thumbnail = await generateThumbnail(filePath)
-      } catch (err) {
-        console.error('[rawlight] generateThumbnail failed for', filePath, err)
+      if (!cached?.thumbnail) {
+        try {
+          thumbnail = await generateThumbnail(filePath)
+        } catch (err) {
+          console.error('[rawlight] generateThumbnail failed for', filePath, err)
+        }
       }
 
-      // Parse EXIF
+      // Parse EXIF only for new photos
       let exif: Record<string, unknown> = {}
-      try {
-        exif = (await exifr.parse(filePath, {
-          pick: ['Make', 'Model', 'DateTimeOriginal', 'ISO', 'FNumber', 'ExposureTime', 'FocalLength'],
-        })) ?? {}
-      } catch {
-        // ignore EXIF errors
+      if (!cached) {
+        try {
+          exif = (await exifr.parse(filePath, {
+            pick: ['Make', 'Model', 'DateTimeOriginal', 'ISO', 'FNumber', 'ExposureTime', 'FocalLength'],
+          })) ?? {}
+        } catch {
+          // ignore EXIF errors
+        }
       }
 
       const info = stmts.insertPhoto.run({
@@ -75,17 +82,30 @@ export function registerIpcHandlers(): void {
         thumbnail: thumbnail,
       })
 
+      let photoId: number | null = null
       if (info.changes > 0 && info.lastInsertRowid) {
-        const insertedId = Number(info.lastInsertRowid)
-        restoreSidecarForPhoto(insertedId, filePath)
-        results.push(insertedId)
-      } else {
-        const existing = stmts.getPhotoByPath.get(filePath) as Record<string, unknown> | undefined
-        if (existing?.id) {
-          if (!existing.thumbnail && thumbnail) {
-            stmts.updatePhotoThumbnail.run(thumbnail, Number(existing.id))
-          }
-          restoreSidecarForPhoto(Number(existing.id), filePath)
+        photoId = Number(info.lastInsertRowid)
+        restoreSidecarForPhoto(photoId, filePath)
+        results.push(photoId)
+      } else if (cached?.id) {
+        photoId = Number(cached.id)
+        if (!cached.thumbnail && thumbnail) {
+          stmts.updatePhotoThumbnail.run(thumbnail, photoId)
+        }
+        restoreSidecarForPhoto(photoId, filePath)
+      }
+
+      // Emit photo to renderer as soon as it's ready
+      if (photoId !== null) {
+        const photoRow = stmts.getPhotoById.get(photoId) as Record<string, unknown> | undefined
+        if (photoRow) {
+          const thumbBuf = photoRow.thumbnail as Buffer | null
+          event.sender.send('catalog:photoReady', {
+            ...photoRow,
+            thumbnail: thumbBuf
+              ? `data:image/jpeg;base64,${Buffer.from(thumbBuf).toString('base64')}`
+              : null
+          })
         }
       }
     }
@@ -123,6 +143,7 @@ export function registerIpcHandlers(): void {
           vibrance: Number(editsRow.vibrance),
           sharpness: Number(editsRow.sharpness),
           noise_reduction: Number(editsRow.noise_reduction),
+          rotation: Number(editsRow.rotation),
         }
       : DEFAULT_EDITS
 
@@ -154,6 +175,7 @@ export function registerIpcHandlers(): void {
       vibrance: Number(row.vibrance),
       sharpness: Number(row.sharpness),
       noise_reduction: Number(row.noise_reduction),
+      rotation: Number(row.rotation),
     }
   })
 
@@ -189,6 +211,7 @@ export function registerIpcHandlers(): void {
           vibrance: Number(editsRow.vibrance),
           sharpness: Number(editsRow.sharpness),
           noise_reduction: Number(editsRow.noise_reduction),
+          rotation: Number(editsRow.rotation),
         }
       : DEFAULT_EDITS
 

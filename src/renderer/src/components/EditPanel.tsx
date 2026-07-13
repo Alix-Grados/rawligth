@@ -248,6 +248,18 @@ export function EditPanel({ photo, localAdjs, selectedLocalId, colorPickLocalId,
             <Slider label="Réduction du bruit" value={edits.noise_reduction} min={0} max={100} onChange={(v) => updateEdit('noise_reduction', v)} />
           </div>
 
+          <div className={styles.group}>
+            <div className={styles.groupTitle}>Géométrie</div>
+            <Slider
+              label="Inclinaison"
+              value={Math.round(edits.rotation * 10)}
+              displayValue={Math.round(edits.rotation * 10) / 10}
+              min={-450}
+              max={450}
+              onChange={(v) => updateEdit('rotation', v / 10)}
+            />
+          </div>
+
           <div className={styles.actions}>
             <button className={styles.resetBtn} onClick={handleReset}>
               Réinitialiser

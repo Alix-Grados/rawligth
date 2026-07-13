@@ -99,6 +99,78 @@
   font-weight: 600;
 }
 
+.sidebarWrap {
+  max-width: var(--sidebar-width);
+  overflow: hidden;
+  transition: max-width 0.2s ease;
+  flex-shrink: 0;
+  display: flex;
+}
+
+.sidebarWrapCollapsed {
+  max-width: 0;
+  overflow: hidden;
+  transition: max-width 0.2s ease;
+  flex-shrink: 0;
+  display: flex;
+}
+
+.editWrap {
+  max-width: var(--edit-panel-width);
+  overflow: hidden;
+  transition: max-width 0.2s ease;
+  flex-shrink: 0;
+  display: flex;
+}
+
+.editWrapCollapsed {
+  max-width: 0;
+  overflow: hidden;
+  transition: max-width 0.2s ease;
+  flex-shrink: 0;
+  display: flex;
+}
+
+.collapseLeft {
+  width: 14px;
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  border-right: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 9px;
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
+}
+
+.collapseLeft:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
+.collapseRight {
+  width: 14px;
+  flex-shrink: 0;
+  background: var(--bg-panel);
+  border-left: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 9px;
+  transition: background 0.15s, color 0.15s;
+  user-select: none;
+}
+
+.collapseRight:hover {
+  background: var(--bg-hover);
+  color: var(--text);
+}
+
 .statusBar {
   height: 22px;
   background: #0e0e0e;

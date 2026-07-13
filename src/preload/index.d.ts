@@ -13,6 +13,7 @@ export interface EditParams {
   vibrance: number
   sharpness: number
   noise_reduction: number
+  rotation: number
 }
 
 export interface Photo {
@@ -76,6 +77,7 @@ export interface RawlightAPI {
   createLocalAdj(photoId: number, kind?: 'radial' | 'lasso' | 'color'): Promise<LocalAdjustment>
   updateLocalAdj(data: LocalAdjustment): Promise<boolean>
   deleteLocalAdj(id: number): Promise<boolean>
+  onPhotoReady(callback: (photo: Photo) => void): () => void
 }
 
 declare global {
