@@ -67,7 +67,7 @@ export interface RawlightAPI {
   openFolder(): Promise<string | null>
   importFolder(folderPath: string): Promise<number[]>
   getPhotosByFolder(folderPath: string): Promise<Photo[]>
-  getPreview(photoId: number, width: number): Promise<string | null>
+  getPreview(photoId: number, width?: number): Promise<string | null>
   getEdits(photoId: number): Promise<EditParams>
   saveEdits(photoId: number, edits: EditParams): Promise<boolean>
   resetEdits(photoId: number): Promise<EditParams>

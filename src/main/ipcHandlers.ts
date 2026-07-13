@@ -104,7 +104,7 @@ export function registerIpcHandlers(): void {
   })
 
   // ---------- Preview ----------
-  ipcMain.handle('image:getPreview', async (_, photoId: number, width: number) => {
+  ipcMain.handle('image:getPreview', async (_, photoId: number, width?: number) => {
     const photo = stmts.getPhotoById.get(photoId) as Record<string, unknown> | undefined
     if (!photo) return null
 
@@ -128,7 +128,8 @@ export function registerIpcHandlers(): void {
 
     try {
       const localAdjs = stmts.getLocalsByPhotoId.all(photoId) as LocalAdjustmentData[]
-      const buffer = await applyEditsWithLocals(String(photo.file_path), edits, localAdjs, { width })
+      const resolvedWidth = Number.isFinite(width) && Number(width) > 0 ? Math.round(Number(width)) : undefined
+      const buffer = await applyEditsWithLocals(String(photo.file_path), edits, localAdjs, { width: resolvedWidth })
       return `data:image/jpeg;base64,${buffer.toString('base64')}`
     } catch (err) {
       console.error('[rawlight] getPreview failed for photo', photoId, err)

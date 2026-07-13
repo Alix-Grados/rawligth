@@ -29,6 +29,9 @@ type DragState =
   | { type: 'lasso-point'; id: number; pointIndex: number; startPoints: Array<{ x: number; y: number }>; startMx: number; startMy: number }
   | null
 
+type RenderQuality = 'fast' | 'full'
+type ScaleMode = 'fit' | 'fill' | 'p100' | 'p200'
+
 function parseLassoPoints(pointsJson: string | null): Array<{ x: number; y: number }> {
   if (!pointsJson) return []
   try {
@@ -71,6 +74,12 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
   // src always holds the LAST successfully loaded image — never set to null
   const [src, setSrc] = useState<string | null>(photo.thumbnail)
   const [loading, setLoading] = useState(false)
+  const [zoom, setZoom] = useState(1)
+  const [scaleMode, setScaleMode] = useState<ScaleMode>('fit')
+  const [renderQuality, setRenderQuality] = useState<RenderQuality>('fast')
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [isPanning, setIsPanning] = useState(false)
+  const [requestedPreviewWidth, setRequestedPreviewWidth] = useState(1600)
   const containerRef = useRef<HTMLDivElement>(null)
   const imgRef = useRef<HTMLImageElement>(null)
   const [imgBounds, setImgBounds] = useState<ImageBounds | null>(null)
@@ -78,11 +87,38 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
   const [drawingLasso, setDrawingLasso] = useState<{ id: number; points: Array<{ x: number; y: number }> } | null>(null)
   const [draggingLasso, setDraggingLasso] = useState<{ id: number; points: Array<{ x: number; y: number }> } | null>(null)
   const dragRef = useRef<DragState>(null)
+  const panRef = useRef<{ pointerId: number; startX: number; startY: number; startPanX: number; startPanY: number } | null>(null)
   const activePointerIdRef = useRef<number | null>(null)
   const pendingDragLassoRef = useRef<{ id: number; points: Array<{ x: number; y: number }> } | null>(null)
   const dragRafRef = useRef<number | null>(null)
   // Track the last photo id to reset src when switching photos
   const lastPhotoId = useRef<number | null>(null)
+
+  const getScaleModeMultiplier = useCallback(() => {
+    if (scaleMode === 'fit' || scaleMode === 'fill') return 1
+
+    const img = imgRef.current
+    if (!img || img.naturalWidth <= 0 || img.clientWidth <= 0) {
+      return scaleMode === 'p200' ? 2 : 1
+    }
+
+    const oneToOne = img.naturalWidth / img.clientWidth
+    return oneToOne * (scaleMode === 'p200' ? 2 : 1)
+  }, [scaleMode])
+
+  const updateRequestedPreviewWidth = useCallback(() => {
+    const container = containerRef.current
+    const viewportWidth = container?.clientWidth ?? 0
+    const dpr = window.devicePixelRatio || 1
+    const target = Math.round(Math.max(viewportWidth, 1200) * dpr * zoom * getScaleModeMultiplier())
+    const clamped = Math.max(1600, Math.min(7680, target))
+
+    setRequestedPreviewWidth((prev) => {
+      // Ignore tiny oscillations from layout rounding to avoid useless re-renders.
+      if (Math.abs(prev - clamped) < 64) return prev
+      return clamped
+    })
+  }, [getScaleModeMultiplier, zoom])
 
   // Load preview — keep old src visible until new one arrives
   useEffect(() => {
@@ -90,18 +126,33 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
     if (lastPhotoId.current !== photo.id) {
       lastPhotoId.current = photo.id
       setSrc(photo.thumbnail)
+      setZoom(1)
+      setPan({ x: 0, y: 0 })
     }
 
-    setLoading(true)
     let cancelled = false
-    ;(async () => {
-      const preview = await window.api.getPreview(photo.id, 1600)
-      if (cancelled) return
-      if (preview) setSrc(preview)
-      setLoading(false)
-    })()
-    return () => { cancelled = true }
-  }, [photo.id, previewRevision])
+    const timer = window.setTimeout(() => {
+      setLoading(true)
+      ;(async () => {
+        const preview = await window.api.getPreview(photo.id, requestedPreviewWidth)
+        if (cancelled) return
+        if (preview) setSrc(preview)
+
+        // Progressive loading path: fast preview first, then full resolution.
+        if (renderQuality === 'full') {
+          const fullRes = await window.api.getPreview(photo.id)
+          if (cancelled) return
+          if (fullRes) setSrc(fullRes)
+        }
+
+        setLoading(false)
+      })()
+    }, 140)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [photo.id, previewRevision, renderQuality, requestedPreviewWidth])
 
   useEffect(() => {
     if (!drawingLasso) return
@@ -210,7 +261,8 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
     const cr = container.getBoundingClientRect()
     const ir = img.getBoundingClientRect()
     setImgBounds({ x: ir.left - cr.left, y: ir.top - cr.top, w: ir.width, h: ir.height })
-  }, [])
+    updateRequestedPreviewWidth()
+  }, [updateRequestedPreviewWidth])
 
   useEffect(() => {
     const ro = new ResizeObserver(updateBounds)
@@ -219,6 +271,129 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
     updateBounds()
     return () => ro.disconnect()
   }, [src, updateBounds])
+
+  useEffect(() => {
+    updateBounds()
+  }, [pan, scaleMode, updateBounds, zoom])
+
+  useEffect(() => {
+    updateRequestedPreviewWidth()
+  }, [photo.id, updateRequestedPreviewWidth])
+
+  const clampZoom = useCallback((value: number) => {
+    return Math.max(1, Math.min(8, value))
+  }, [])
+
+  const applyZoomStep = useCallback((direction: 1 | -1) => {
+    setZoom((prev) => {
+      const step = prev < 2 ? 0.2 : 0.4
+      return clampZoom(prev + direction * step)
+    })
+  }, [clampZoom])
+
+  const handleZoomIn = useCallback(() => {
+    applyZoomStep(1)
+  }, [applyZoomStep])
+
+  const handleZoomOut = useCallback(() => {
+    applyZoomStep(-1)
+  }, [applyZoomStep])
+
+  const handleResetZoom = useCallback(() => {
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }, [])
+
+  const handleSetScaleMode = useCallback((next: ScaleMode) => {
+    setScaleMode(next)
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }, [])
+
+  const effectiveZoom = zoom * getScaleModeMultiplier()
+
+  const clampPan = useCallback((x: number, y: number, zoomValue: number = effectiveZoom) => {
+    const container = containerRef.current
+    const img = imgRef.current
+    if (!container || !img) return { x: 0, y: 0 }
+
+    const cw = container.clientWidth
+    const ch = container.clientHeight
+    const scaledW = img.clientWidth * zoomValue
+    const scaledH = img.clientHeight * zoomValue
+    const maxX = Math.max(0, (scaledW - cw) / 2)
+    const maxY = Math.max(0, (scaledH - ch) / 2)
+
+    return {
+      x: Math.max(-maxX, Math.min(maxX, x)),
+      y: Math.max(-maxY, Math.min(maxY, y)),
+    }
+  }, [effectiveZoom])
+
+  useEffect(() => {
+    if (effectiveZoom <= 1.001) {
+      setPan({ x: 0, y: 0 })
+      setIsPanning(false)
+      panRef.current = null
+      return
+    }
+    setPan((prev) => clampPan(prev.x, prev.y))
+  }, [clampPan, effectiveZoom, scaleMode, src])
+
+  const handlePanPointerDown = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    if (e.button !== 0) return
+    if (effectiveZoom <= 1.001) return
+    if (colorPickLocalId !== null) return
+
+    const target = e.target as HTMLElement
+    if (target.closest(`.${styles.zoomControls}`)) return
+
+    const tag = target.tagName.toLowerCase()
+    if (tag === 'circle' || tag === 'ellipse' || tag === 'polygon' || tag === 'polyline' || tag === 'text') {
+      return
+    }
+
+    if (drawingLasso || dragRef.current) return
+
+    panRef.current = {
+      pointerId: e.pointerId,
+      startX: e.clientX,
+      startY: e.clientY,
+      startPanX: pan.x,
+      startPanY: pan.y,
+    }
+    setIsPanning(true)
+    e.currentTarget.setPointerCapture(e.pointerId)
+    e.preventDefault()
+  }, [colorPickLocalId, drawingLasso, effectiveZoom, pan.x, pan.y])
+
+  const handlePanPointerMove = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const state = panRef.current
+    if (!state || state.pointerId !== e.pointerId) return
+
+    const dx = e.clientX - state.startX
+    const dy = e.clientY - state.startY
+    setPan(clampPan(state.startPanX + dx, state.startPanY + dy))
+  }, [clampPan])
+
+  const handlePanPointerUp = useCallback((e: React.PointerEvent<HTMLDivElement>) => {
+    const state = panRef.current
+    if (!state || state.pointerId !== e.pointerId) return
+    panRef.current = null
+    setIsPanning(false)
+    if (e.currentTarget.hasPointerCapture(e.pointerId)) {
+      e.currentTarget.releasePointerCapture(e.pointerId)
+    }
+  }, [])
+
+  const handleImageWrapWheel = useCallback((e: React.WheelEvent<HTMLDivElement>) => {
+    e.preventDefault()
+    if (e.deltaY < 0) {
+      applyZoomStep(1)
+    } else if (e.deltaY > 0) {
+      applyZoomStep(-1)
+    }
+  }, [applyZoomStep])
 
   // Mouse events for drag/resize
   const handleSvgPointerMove = useCallback((e: React.PointerEvent<SVGSVGElement>) => {
@@ -410,9 +585,45 @@ export function DetailView({ photo, previewRevision, localAdjs, selectedLocalId,
 
   return (
     <div className={styles.container}>
-      <div className={styles.imageWrap} ref={containerRef}>
+      <div
+        className={
+          styles.imageWrap
+          + (effectiveZoom > 1.001 ? ' ' + styles.pannable : '')
+          + (isPanning ? ' ' + styles.panning : '')
+        }
+        ref={containerRef}
+        onWheel={handleImageWrapWheel}
+        onPointerDown={handlePanPointerDown}
+        onPointerMove={handlePanPointerMove}
+        onPointerUp={handlePanPointerUp}
+        onPointerCancel={handlePanPointerUp}
+      >
+        <div className={styles.zoomControls}>
+          <div className={styles.controlGroup}>
+            <button type="button" className={styles.modeBtn + (scaleMode === 'fit' ? ' ' + styles.modeBtnActive : '')} onClick={() => handleSetScaleMode('fit')}>Fit</button>
+            <button type="button" className={styles.modeBtn + (scaleMode === 'fill' ? ' ' + styles.modeBtnActive : '')} onClick={() => handleSetScaleMode('fill')}>Fill</button>
+            <button type="button" className={styles.modeBtn + (scaleMode === 'p100' ? ' ' + styles.modeBtnActive : '')} onClick={() => handleSetScaleMode('p100')}>100%</button>
+            <button type="button" className={styles.modeBtn + (scaleMode === 'p200' ? ' ' + styles.modeBtnActive : '')} onClick={() => handleSetScaleMode('p200')}>200%</button>
+          </div>
+          <div className={styles.controlGroup}>
+            <button type="button" className={styles.modeBtn + (renderQuality === 'fast' ? ' ' + styles.modeBtnActive : '')} onClick={() => setRenderQuality('fast')}>Rapide</button>
+            <button type="button" className={styles.modeBtn + (renderQuality === 'full' ? ' ' + styles.modeBtnActive : '')} onClick={() => setRenderQuality('full')}>Pleine</button>
+          </div>
+          <button type="button" className={styles.zoomBtn} onClick={handleZoomOut} disabled={zoom <= 1.001} aria-label="Zoom arrière">−</button>
+          <span className={styles.zoomValue}>{Math.round(effectiveZoom * 100)}%</span>
+          <button type="button" className={styles.zoomBtn} onClick={handleZoomIn} disabled={zoom >= 7.999} aria-label="Zoom avant">+</button>
+          <button type="button" className={styles.zoomReset} onClick={handleResetZoom} disabled={zoom <= 1.001}>100%</button>
+        </div>
         {src ? (
-          <img ref={imgRef} src={src} alt={photo.filename} draggable={false} onLoad={updateBounds} />
+          <img
+            ref={imgRef}
+            className={scaleMode === 'fill' ? styles.imageFill : undefined}
+            src={src}
+            alt={photo.filename}
+            draggable={false}
+            onLoad={updateBounds}
+            style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${effectiveZoom})`, transformOrigin: 'center center' }}
+          />
         ) : (
           <div className={styles.loading}>Chargement…</div>
         )}
